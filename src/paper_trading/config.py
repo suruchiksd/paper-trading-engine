@@ -51,11 +51,18 @@ class PaperBrokerSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class PersistenceSettings:
+    enabled: bool
+    database_path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     settings: Settings
     risk: RiskSettings
     historical_data: HistoricalDataSettings
     paper_broker: PaperBrokerSettings
+    persistence: PersistenceSettings
 
 
 def _read_yaml(path: Path) -> Mapping[str, Any]:
@@ -115,6 +122,19 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
             raise ValueError("paper_broker.fill_mode must be 'candle'")
         if paper_broker.transaction_cost_bps < 0:
             raise ValueError("transaction_cost_bps cannot be negative")
+        persistence_data = settings_data.get("persistence", {})
+        persistence_path = Path(
+            persistence_data.get(
+                "database_path",
+                settings_data.get("database_path", "data/state/paper_trading.sqlite"),
+            )
+        )
+        if not persistence_path.is_absolute():
+            persistence_path = root.parent / persistence_path
+        persistence = PersistenceSettings(
+            enabled=bool(persistence_data.get("enabled", True)),
+            database_path=persistence_path,
+        )
         risk = RiskSettings(**risk_data)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"invalid configuration in {root}: {exc}") from exc
@@ -128,5 +148,9 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
         if not 0 < value <= 100:
             raise ValueError("risk percentages must be in the range (0, 100]")
     return AppConfig(
-        settings=settings, risk=risk, historical_data=historical, paper_broker=paper_broker
+        settings=settings,
+        risk=risk,
+        historical_data=historical,
+        paper_broker=paper_broker,
+        persistence=persistence,
     )

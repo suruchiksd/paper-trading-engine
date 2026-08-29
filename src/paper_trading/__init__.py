@@ -13,8 +13,10 @@ from .models import (
     Side,
     Signal,
     SignalDirection,
+    SessionStatus,
     Tick,
     Trade,
+    TradingSession,
 )
 
 __all__ = [
@@ -30,6 +32,8 @@ __all__ = [
     "Side",
     "Signal",
     "SignalDirection",
+    "SessionStatus",
     "Tick",
     "Trade",
+    "TradingSession",
 ]

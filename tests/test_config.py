@@ -14,3 +14,5 @@ def test_example_configuration_loads() -> None:
     assert config.historical_data.quality.invalid_ohlc == "ERROR"
     assert config.paper_broker.intrabar_ambiguity == "CONSERVATIVE"
     assert config.paper_broker.slippage.market_bps == 2.0
+    assert config.persistence.enabled
+    assert config.persistence.database_path == project_root / "data/state/paper_trading.sqlite"

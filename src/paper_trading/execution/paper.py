@@ -57,6 +57,13 @@ class PaperBroker:
             raise KeyError(f"active broker order not found: {order_id}")
         del self._orders[order_id]
 
+    def restore_order(self, order: Order) -> None:
+        if order.status not in {OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED}:
+            raise ValueError("only active orders may be restored into the broker")
+        if order.order_id in self._orders:
+            raise ValueError(f"broker order already restored: {order.order_id}")
+        self._orders[order.order_id] = order
+
     def active_orders(self) -> tuple[Order, ...]:
         return tuple(self._orders.values())
 
@@ -66,7 +73,7 @@ class PaperBroker:
             for order in self._orders.values()
             if order.status is OrderStatus.OPEN
             and order.instrument.key == candle.instrument.key
-            and order.created_at < candle.timestamp
+            and (order.eligible_after or order.created_at) < candle.timestamp
         ]
         candidates = [(order, self._fill_price(order, candle)) for order in eligible]
         candidates = [(order, price) for order, price in candidates if price is not None]
@@ -152,4 +159,3 @@ class PaperBroker:
     def _slip(price: float, side: Side, basis_points: float) -> float:
         direction = 1 if side is Side.BUY else -1
         return price * (1 + direction * basis_points / 10_000)
-

@@ -6,10 +6,10 @@ portfolio accounting, persistence, and reporting.
 
 ## Current status and architecture
 
-The engine supports read-only historical Parquet replay and deterministic candle-
-based paper execution. It has no trading strategy, live market-data connection, or
-real broker implementation. The central rule remains: **a strategy never calls a
-broker directly**.
+The engine supports read-only historical Parquet replay, deterministic candle-based
+paper execution, and optional durable SQLite sessions with restart recovery. It has
+no trading strategy, live market-data connection, or real broker implementation. The
+central rule remains: **a strategy never calls a broker directly**.
 
 ```text
 Historical data -> ReplayFeed -> TradingEngine -> Strategy/manual OrderRequest
@@ -116,6 +116,52 @@ python3 scripts/run_paper_replay_demo.py --symbol RELIANCE \
 Historical paper execution is distinct from future live-paper execution, which can
 observe live bid/ask and depth.
 
+## Durable sessions and crash recovery
+
+Persistence is configured under `persistence` in `config/settings.yaml`; the default
+database is `data/state/paper_trading.sqlite`. Relative paths resolve from the project
+directory containing `config/`. SQLite foreign keys, WAL journaling, explicit
+transactions, and `synchronous=FULL` are enabled. These settings improve local
+durability but are not a claim of immunity to filesystem or hardware failure.
+
+A session represents historical paper replay or a future operating mode and moves
+through `CREATED`, `RUNNING`, and a terminal/paused state: `STOPPED`, `COMPLETED`, or
+`FAILED`. Only non-terminal sessions can be resumed.
+
+The fill ledger is the sole authoritative source for economic accounting. Recovery:
+
+1. Loads and validates every order and fill.
+2. Rebuilds cash, weighted-average positions, costs, realized P&L, and trades by
+   applying fills once in database sequence.
+3. Reconciles regenerated closed trades against persisted final trade records.
+4. Validates position checkpoints and reapplies their latest market marks.
+5. Registers only `OPEN`/`PARTIALLY_FILLED` orders with a fresh `PaperBroker`.
+
+Terminal orders never become active again. Persisted `eligible_after` timestamps
+preserve next-bar eligibility. Unique fill IDs reject duplicate economic application,
+and repeated recovery creates fresh runtime objects without changing economics.
+
+One execution commit atomically stores resulting order states, unique fills, closed
+trades, audit events, an after-fill portfolio snapshot, and position checkpoints.
+Portfolio snapshots are reporting/debug records, never an alternative accounting
+authority. Historical candles are not copied into SQLite.
+
+The schema initializes automatically and has an explicit version. Unsupported
+versions and inconsistencies—such as filled quantity without matching fills,
+instrument mismatch, incorrect average fill price, trade drift, or checkpoint
+drift—fail recovery rather than being guessed or repaired. Structured metadata uses
+JSON; pickle/eval serialization is not used.
+
+Create and inspect a persisted synthetic replay:
+
+```bash
+python3 scripts/run_paper_replay_demo.py --symbol RELIANCE \
+  --date 2026-07-31 --submit-after 10:00 --quantity 10 --persist
+python3 scripts/session_status.py --session SESSION_ID
+```
+
+Use `--database /path/to/state.sqlite` with either script to override configuration.
+
 ## Structure
 
 ```text
@@ -129,16 +175,20 @@ src/paper_trading/
   execution/               Broker protocol, PaperBroker, OMS, costs, transitions
   portfolio/               Weighted-average in-memory accounting
   risk/                    Deterministic pre-trade risk checks
+  storage/                 SQLite schema, repositories, lifecycle, and recovery
   strategies/              Broker-independent strategy lifecycle
 tests/                     Unit and integration tests with small fixtures
 ```
 
 ## Deferred
 
-Persistence, session recovery, detailed Indian-equity charges, margin/borrow rules,
-partial fills, queue simulation, STOP_LIMIT execution, exchange calendars, actual
-strategies, live-paper interfaces, Zerodha WebSocket/API access, and real execution
-are intentionally absent.
+Detailed Indian-equity charges, margin/borrow rules, partial fills, queue simulation,
+STOP_LIMIT execution, exchange calendars, actual strategies, live-paper interfaces,
+Zerodha WebSocket/API access, and real execution are intentionally absent. SQLite is
+local single-process-oriented storage; distributed writers and automated schema
+migrations are not supported. Marks are checkpointed in place while historical
+snapshots are written only at session and fill boundaries.
 
-The recommended next phase is durable event/session persistence and reporting with
-restart/reconciliation tests. Live Zerodha work should remain a separate later phase.
+The recommended next phase is read-only session reporting/export built on the audit
+journal and snapshots, followed by explicit reconciliation tooling. Live Zerodha work
+should remain a separate later phase.

@@ -20,3 +20,6 @@ paper_broker:
     market_bps: 2.0
     stop_market_bps: 3.0
   transaction_cost_bps: 0.0
+persistence:
+  enabled: true
+  database_path: data/state/paper_trading.sqlite

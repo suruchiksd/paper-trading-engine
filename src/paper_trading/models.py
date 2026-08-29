@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Mapping
 from uuid import uuid4
@@ -40,6 +40,34 @@ class SignalDirection(StrEnum):
     EXIT = "EXIT"
 
 
+class SessionStatus(StrEnum):
+    CREATED = "CREATED"
+    RUNNING = "RUNNING"
+    STOPPED = "STOPPED"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+@dataclass(frozen=True, slots=True)
+class TradingSession:
+    session_id: str
+    trading_date: date
+    mode: str
+    started_at: datetime | None
+    ended_at: datetime | None
+    status: SessionStatus
+    starting_capital: float
+    strategy_context: Mapping[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self) -> None:
+        if self.starting_capital <= 0:
+            raise ValueError("starting_capital must be positive")
+        if not self.mode:
+            raise ValueError("session mode is required")
+
+
 @dataclass(frozen=True, slots=True)
 class OrderRequest:
     """Pre-risk order intent from a strategy or manual operator."""
@@ -49,6 +77,7 @@ class OrderRequest:
     order_type: OrderType
     quantity: int
     timestamp: datetime
+    eligible_after: datetime | None = None
     signal_id: str | None = None
     strategy_id: str | None = None
     strategy_version: str | None = None
@@ -159,6 +188,7 @@ class Order:
     order_type: OrderType
     quantity: int
     created_at: datetime
+    eligible_after: datetime | None = None
     signal_id: str | None = None
     strategy_id: str | None = None
     strategy_version: str | None = None

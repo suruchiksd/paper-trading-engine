@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Callable, Iterable, Sequence
 
 from .events import CandleEvent, FillEvent, OrderEvent, RiskEvent, SignalEvent
 from .execution import OrderManager
@@ -11,6 +11,9 @@ from .models import Candle, Order, OrderRequest, Signal
 from .portfolio import Portfolio
 from .risk import RiskDecision, RiskManager
 from .strategies import BaseStrategy
+
+if TYPE_CHECKING:
+    from .storage import SessionRecorder
 
 
 @dataclass(slots=True)
@@ -30,6 +33,7 @@ class TradingEngine:
     risk_manager: RiskManager | None = None
     order_manager: OrderManager | None = None
     portfolio: Portfolio | None = None
+    persistence: SessionRecorder | None = None
     emitted_signals: list[SignalEvent] = field(default_factory=list, init=False)
     risk_events: list[RiskEvent] = field(default_factory=list, init=False)
     order_events: list[OrderEvent] = field(default_factory=list, init=False)
@@ -72,14 +76,23 @@ class TradingEngine:
     def process_candle(self, candle: Candle) -> None:
         """Apply execution, accounting, marks, then expose a completed candle."""
         fills = ()
+        trades = []
         if self.order_manager is not None:
             fills = self.order_manager.process_candle(candle)
             for fill in fills:
                 self.fill_events.append(FillEvent(fill))
                 if self.portfolio is not None:
-                    self.portfolio.process_fill(fill)
+                    trades.extend(self.portfolio.process_fill(fill))
         if self.portfolio is not None:
             self.portfolio.mark(candle.instrument.key, candle.close)
+        if self.persistence is not None and self.portfolio is not None:
+            if fills:
+                assert self.order_manager is not None
+                self.persistence.record_execution(
+                    self.order_manager.orders.values(), fills, trades, self.portfolio, candle.timestamp
+                )
+            elif self.portfolio.open_positions:
+                self.persistence.checkpoint_positions(self.portfolio, candle.timestamp)
         for fill in fills:
             self._collect(strategy.on_fill(fill) for strategy in self.strategies)
         self.last_candle = candle
@@ -101,12 +114,17 @@ class TradingEngine:
         else:
             order = self.order_manager.register_rejection(request, decision.reason)
         self.order_events.append(OrderEvent(order))
+        if self.persistence is not None:
+            self.persistence.record_order_decision(order, decision, request.timestamp)
         return decision, order
 
     def cancel_order(self, order_id: str, timestamp: datetime, reason: str = "cancelled by user") -> Order:
         if self.order_manager is None:
             raise RuntimeError("order_manager is required")
-        return self.order_manager.cancel(order_id, timestamp, reason)
+        order = self.order_manager.cancel(order_id, timestamp, reason)
+        if self.persistence is not None:
+            self.persistence.record_order_update(order, timestamp)
+        return order
 
     def _collect(self, groups: Iterable[Iterable[Signal]]) -> None:
         for signals in groups:

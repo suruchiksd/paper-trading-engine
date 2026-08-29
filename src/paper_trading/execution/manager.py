@@ -15,6 +15,15 @@ class OrderManager:
         self.orders: dict[str, Order] = {}
         self.fills: list[Fill] = []
 
+    def restore(self, orders: list[Order], fills: list[Fill]) -> None:
+        if self.orders or self.fills or self.broker.active_orders():
+            raise ValueError("order manager must be empty before recovery")
+        self.orders = {order.order_id: order for order in orders}
+        self.fills = list(fills)
+        for order in orders:
+            if order.status in {OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED}:
+                self.broker.restore_order(order)
+
     def submit(self, request: OrderRequest) -> Order:
         order = Order(
             instrument=request.instrument,
@@ -22,6 +31,7 @@ class OrderManager:
             order_type=request.order_type,
             quantity=request.quantity,
             created_at=request.timestamp,
+            eligible_after=request.eligible_after or request.timestamp,
             signal_id=request.signal_id,
             strategy_id=request.strategy_id,
             strategy_version=request.strategy_version,
@@ -46,6 +56,7 @@ class OrderManager:
             request.order_type,
             request.quantity,
             request.timestamp,
+            eligible_after=request.eligible_after or request.timestamp,
             signal_id=request.signal_id,
             strategy_id=request.strategy_id,
             strategy_version=request.strategy_version,
@@ -83,4 +94,3 @@ class OrderManager:
             order = self.orders[order_id]
             transition_order(order, OrderStatus.CANCELLED, candle.timestamp, reason="OCO sibling filled")
         return update.fills
-
