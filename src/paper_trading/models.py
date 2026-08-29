@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Mapping
@@ -48,12 +48,15 @@ class Instrument:
     instrument_type: str = "EQ"
     tick_size: float = 0.05
     lot_size: int = 1
+    segment: str | None = None
 
     def __post_init__(self) -> None:
         if not self.exchange or not self.tradingsymbol:
             raise ValueError("exchange and tradingsymbol are required")
-        if self.tick_size <= 0 or self.lot_size <= 0:
-            raise ValueError("tick_size and lot_size must be positive")
+        if self.tick_size < 0 or self.lot_size < 0:
+            raise ValueError("tick_size and lot_size cannot be negative")
+        if self.segment != "INDICES" and (self.tick_size == 0 or self.lot_size == 0):
+            raise ValueError("tradable instruments require positive tick_size and lot_size")
 
     @property
     def key(self) -> str:
@@ -90,15 +93,16 @@ class Candle:
     close: float
     volume: int = 0
     completed: bool = True
+    validate_ohlc: InitVar[bool] = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, validate_ohlc: bool) -> None:
         if not self.interval:
             raise ValueError("interval is required")
         if min(self.open, self.high, self.low, self.close) <= 0:
             raise ValueError("OHLC prices must be positive")
-        if self.high < max(self.open, self.low, self.close):
+        if validate_ohlc and self.high < max(self.open, self.low, self.close):
             raise ValueError("high must be at least open, low, and close")
-        if self.low > min(self.open, self.high, self.close):
+        if validate_ohlc and self.low > min(self.open, self.high, self.close):
             raise ValueError("low must be at most open, high, and close")
         if self.volume < 0:
             raise ValueError("volume cannot be negative")
@@ -222,4 +226,3 @@ class PortfolioSnapshot:
     realized_pnl: float
     unrealized_pnl: float
     positions: Mapping[str, int] = field(default_factory=dict)
-

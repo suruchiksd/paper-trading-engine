@@ -8,6 +8,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from .market_data.quality import DataQualityAction, HistoricalDataQualityPolicy
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -31,9 +33,19 @@ class RiskSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class HistoricalDataSettings:
+    root: Path
+    equities_subdir: str
+    indices_subdir: str
+    instrument_master: Path
+    quality: HistoricalDataQualityPolicy
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     settings: Settings
     risk: RiskSettings
+    historical_data: HistoricalDataSettings
 
 
 def _read_yaml(path: Path) -> Mapping[str, Any]:
@@ -60,8 +72,24 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
             logging_path=Path(settings_data["logging_path"]),
             operating_mode=str(settings_data["operating_mode"]),
         )
+        historical_data = settings_data["historical_data"]
+        quality_data = historical_data.get("quality", {})
+        quality = HistoricalDataQualityPolicy(
+            duplicate_timestamps=DataQualityAction(
+                quality_data.get("duplicate_timestamps", "error").upper()
+            ),
+            invalid_ohlc=DataQualityAction(quality_data.get("invalid_ohlc", "error").upper()),
+            missing_bars=DataQualityAction(quality_data.get("missing_bars", "error").upper()),
+        )
+        historical = HistoricalDataSettings(
+            root=Path(historical_data["root"]),
+            equities_subdir=str(historical_data.get("equities_subdir", "equities")),
+            indices_subdir=str(historical_data.get("indices_subdir", "indices")),
+            instrument_master=Path(historical_data["instrument_master"]),
+            quality=quality,
+        )
         risk = RiskSettings(**risk_data)
-    except (KeyError, TypeError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"invalid configuration in {root}: {exc}") from exc
     if risk.starting_capital <= 0 or risk.maximum_positions <= 0:
         raise ValueError("starting_capital and maximum_positions must be positive")
@@ -72,5 +100,4 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
     ):
         if not 0 < value <= 100:
             raise ValueError("risk percentages must be in the range (0, 100]")
-    return AppConfig(settings=settings, risk=risk)
-
+    return AppConfig(settings=settings, risk=risk, historical_data=historical)

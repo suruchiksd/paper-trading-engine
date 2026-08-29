@@ -4,4 +4,12 @@ default_candle_interval: 5minute
 database_path: data/state/paper_trading.sqlite3
 logging_path: logs/paper_trading.log
 operating_mode: historical_replay
-
+historical_data:
+  root: /home/suruchi-pandey/market-data-platform-gpt/data
+  equities_subdir: equities
+  indices_subdir: indices
+  instrument_master: /home/suruchi-pandey/market-data-platform-gpt/data/reference/instruments_nse.csv
+  quality:
+    duplicate_timestamps: error
+    invalid_ohlc: error
+    missing_bars: error
