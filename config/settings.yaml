@@ -1,0 +1,7 @@
+timezone: Asia/Kolkata
+exchange: NSE
+default_candle_interval: 5minute
+database_path: data/state/paper_trading.sqlite3
+logging_path: logs/paper_trading.log
+operating_mode: historical_replay
+

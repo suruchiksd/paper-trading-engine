@@ -1,0 +1,8 @@
+starting_capital: 1000000.0
+risk_per_trade_pct: 1.0
+maximum_positions: 5
+maximum_daily_loss_pct: 3.0
+maximum_position_exposure_pct: 20.0
+new_entry_cutoff: "15:00"
+square_off_time: "15:20"
+
