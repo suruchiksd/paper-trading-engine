@@ -16,3 +16,6 @@ def test_example_configuration_loads() -> None:
     assert config.paper_broker.slippage.market_bps == 2.0
     assert config.persistence.enabled
     assert config.persistence.database_path == project_root / "data/state/paper_trading.sqlite"
+    assert config.live_market_data.provider == "zerodha"
+    assert config.live_market_data.mode == "full"
+    assert config.live_market_data.symbols == ("RELIANCE",)

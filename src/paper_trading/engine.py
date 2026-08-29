@@ -4,10 +4,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Iterable, Sequence
 
-from .events import CandleEvent, FillEvent, OrderEvent, RiskEvent, SignalEvent
+from .events import CandleEvent, FillEvent, OrderEvent, RiskEvent, SignalEvent, TickEvent
 from .execution import OrderManager
 from .market_data.interfaces import MarketDataFeed
-from .models import Candle, Order, OrderRequest, Signal
+from .models import Candle, Order, OrderRequest, Signal, Tick
 from .portfolio import Portfolio
 from .risk import RiskDecision, RiskManager
 from .strategies import BaseStrategy
@@ -97,6 +97,16 @@ class TradingEngine:
             self._collect(strategy.on_fill(fill) for strategy in self.strategies)
         self.last_candle = candle
         self._collect(strategy.on_candle(candle) for strategy in self.strategies)
+
+    def process_tick(self, tick: Tick) -> None:
+        """Dispatch a normalized live tick without invoking execution components."""
+        self._collect(strategy.on_tick(tick) for strategy in self.strategies)
+
+    def dispatch_market_event(self, event: TickEvent | CandleEvent) -> None:
+        if isinstance(event, TickEvent):
+            self.process_tick(event.tick)
+        else:
+            self.process_candle(event.candle)
 
     def submit_order(self, request: OrderRequest) -> tuple[RiskDecision, Order]:
         """Submit manual/synthetic intent through the same risk and OMS path."""

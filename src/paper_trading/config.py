@@ -57,12 +57,24 @@ class PersistenceSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveMarketDataSettings:
+    provider: str
+    exchange: str
+    mode: str
+    stale_after_seconds: float
+    symbols: tuple[str, ...]
+    reconnect_max_tries: int
+    reconnect_max_delay: int
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     settings: Settings
     risk: RiskSettings
     historical_data: HistoricalDataSettings
     paper_broker: PaperBrokerSettings
     persistence: PersistenceSettings
+    live_market_data: LiveMarketDataSettings
 
 
 def _read_yaml(path: Path) -> Mapping[str, Any]:
@@ -135,6 +147,26 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
             enabled=bool(persistence_data.get("enabled", True)),
             database_path=persistence_path,
         )
+        live_data = settings_data.get("live_market_data", {})
+        live_market_data = LiveMarketDataSettings(
+            provider=str(live_data.get("provider", "zerodha")).lower(),
+            exchange=str(live_data.get("exchange", "NSE")).upper(),
+            mode=str(live_data.get("mode", "full")).lower(),
+            stale_after_seconds=float(live_data.get("stale_after_seconds", 10)),
+            symbols=tuple(str(symbol) for symbol in live_data.get("symbols", ["RELIANCE"])),
+            reconnect_max_tries=int(live_data.get("reconnect_max_tries", 10)),
+            reconnect_max_delay=int(live_data.get("reconnect_max_delay", 30)),
+        )
+        if live_market_data.provider != "zerodha":
+            raise ValueError("live_market_data.provider must be 'zerodha'")
+        if live_market_data.mode not in {"full", "quote", "ltp"}:
+            raise ValueError("live_market_data.mode must be full, quote, or ltp")
+        if live_market_data.stale_after_seconds <= 0:
+            raise ValueError("stale_after_seconds must be positive")
+        if not live_market_data.symbols:
+            raise ValueError("at least one live symbol is required")
+        if live_market_data.reconnect_max_tries < 0 or live_market_data.reconnect_max_delay <= 0:
+            raise ValueError("invalid live reconnect settings")
         risk = RiskSettings(**risk_data)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"invalid configuration in {root}: {exc}") from exc
@@ -153,4 +185,5 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
         historical_data=historical,
         paper_broker=paper_broker,
         persistence=persistence,
+        live_market_data=live_market_data,
     )

@@ -124,7 +124,7 @@ class Instrument:
 @dataclass(frozen=True, slots=True)
 class Tick:
     instrument: Instrument
-    exchange_timestamp: datetime
+    exchange_timestamp: datetime | None
     received_timestamp: datetime
     last_price: float
     volume: int | None = None

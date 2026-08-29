@@ -9,6 +9,7 @@ description = "Local paper-trading and medium-frequency research engine foundati
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "kiteconnect>=5,<6",
     "pyarrow>=23,<26",
     "PyYAML>=6.0,<7",
     "python-dotenv>=1.0,<2",

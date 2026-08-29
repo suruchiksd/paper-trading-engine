@@ -23,3 +23,12 @@ paper_broker:
 persistence:
   enabled: true
   database_path: data/state/paper_trading.sqlite
+live_market_data:
+  provider: zerodha
+  exchange: NSE
+  mode: full
+  stale_after_seconds: 10
+  symbols:
+    - RELIANCE
+  reconnect_max_tries: 10
+  reconnect_max_delay: 30

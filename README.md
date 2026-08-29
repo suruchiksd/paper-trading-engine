@@ -7,9 +7,10 @@ portfolio accounting, persistence, and reporting.
 ## Current status and architecture
 
 The engine supports read-only historical Parquet replay, deterministic candle-based
-paper execution, and optional durable SQLite sessions with restart recovery. It has
-no trading strategy, live market-data connection, or real broker implementation. The
-central rule remains: **a strategy never calls a broker directly**.
+paper execution, optional durable SQLite sessions, and read-only Zerodha WebSocket
+market data. It has no trading strategy, live order path, or real broker
+implementation. The central rule remains: **a strategy never calls a broker
+directly**.
 
 ```text
 Historical data -> ReplayFeed -> TradingEngine -> Strategy/manual OrderRequest
@@ -162,6 +163,85 @@ python3 scripts/session_status.py --session SESSION_ID
 
 Use `--database /path/to/state.sqlite` with either script to override configuration.
 
+## Read-only Zerodha live market data
+
+**LIVE MARKET DATA DOES NOT MEAN LIVE PAPER TRADING YET.** The live CLI constructs a
+`TradingEngine` without risk, order-manager, broker, portfolio, or persistence
+components. It cannot place or simulate orders and does not store raw ticks in
+SQLite.
+
+```text
+KiteTicker callback -> normalize/enqueue Tick -> OneMinuteCandleBuilder
+                    -> TickEvent/CandleEvent -> read-only TradingEngine
+```
+
+Callbacks only normalize and enqueue. A normal consumer thread processes the bounded
+standard-library queue. Full subscription mode is the default because it supplies
+exchange timestamps, cumulative session volume, and market depth; only best bid/ask
+are retained. Quote/LTP modes can be configured, but packets without an exchange
+timestamp are deliberately excluded from candle aggregation.
+
+Credentials are loaded from `.env` or the environment:
+
+```text
+KITE_API_KEY
+KITE_API_SECRET
+KITE_ACCESS_TOKEN
+```
+
+They are never persisted or logged. To obtain an access token, print the login URL,
+complete browser login manually, then explicitly exchange the redirect token:
+
+```bash
+python3 scripts/zerodha_login.py
+python3 scripts/zerodha_login.py --request-token TOKEN_FROM_REDIRECT
+```
+
+The helper prints the resulting access-token assignment once for the user to copy to
+`.env`; it does not store it automatically and performs no order API calls.
+
+Run one or more read-only subscriptions:
+
+```bash
+python3 scripts/run_live_feed.py --symbol RELIANCE
+python3 scripts/run_live_feed.py --symbol RELIANCE --symbol SBIN
+```
+
+Completed candles print by default; `--ticks` also prints normalized ticks. Ctrl+C
+stops reconnect attempts and closes the socket cleanly.
+
+Live candles use the same `Candle(interval="1minute", completed=True)` domain model
+and Asia/Kolkata start timestamp as historical candles. A candle finalizes only when
+the next tick for that same instrument reaches a later minute. Another instrument's
+tick does not finalize it, and an inactive symbol may therefore retain an incomplete
+candle indefinitely. Missing minutes are counted/logged but never manufactured.
+On rollover, the completed prior-minute `CandleEvent` is dispatched before the new
+minute's `TickEvent`, preventing consumers from seeing the new price first.
+
+Zerodha volume is treated as cumulative session volume. The first observed minute
+uses its first tick as a baseline, so its volume represents only the observed delta.
+Consecutive minutes use the previous minute's last cumulative value. After a minute
+gap, the new first tick becomes a fresh baseline to avoid assigning multi-minute
+volume to one candle. A decrease is warned and, by default, resets the baseline; an
+explicit drop policy is also available. Indices or packets without volume produce
+zero candle volume.
+
+Exact duplicate ticks are dropped. Ticks older than the last accepted exchange
+timestamp, or belonging to an already finalized minute, are dropped and counted;
+finalized candles are never reopened. Naive exchange timestamps from the official
+client are interpreted as Asia/Kolkata, while absent exchange timestamps remain
+`None` rather than being replaced with receipt time.
+
+Feed health exposes connection state, last receive/exchange timestamps, tick count,
+reconnect count, malformed/dropped/duplicate/out-of-order counts, volume regressions,
+last error, and injected-clock staleness. Default staleness is ten seconds and is
+observational only—it does not control risk or orders in this phase.
+
+KiteTicker's bounded automatic reconnect is enabled. Subscriptions and full mode are
+reapplied on connection, temporary disconnects remain reconnectable, and exhausted
+retries surface as errors. Authentication/token failures stop retries with an
+actionable message; credentials are never refreshed automatically.
+
 ## Structure
 
 ```text
@@ -172,6 +252,7 @@ src/paper_trading/
   events.py                In-process event envelopes
   engine.py                Deterministic orchestration
   market_data/             Parquet/instrument adapters and replay feed
+                           Zerodha normalization, live feed, health, candle builder
   execution/               Broker protocol, PaperBroker, OMS, costs, transitions
   portfolio/               Weighted-average in-memory accounting
   risk/                    Deterministic pre-trade risk checks
@@ -188,6 +269,10 @@ Zerodha WebSocket/API access, and real execution are intentionally absent. SQLit
 local single-process-oriented storage; distributed writers and automated schema
 migrations are not supported. Marks are checkpointed in place while historical
 snapshots are written only at session and fill boundaries.
+
+Live limitations include no timer-based candle finalizer, exchange calendar, raw-tick
+archive, full-depth model, latency metrics beyond timestamps, or cross-process queue.
+No candle is emitted until a later tick arrives for the same instrument.
 
 The recommended next phase is read-only session reporting/export built on the audit
 journal and snapshots, followed by explicit reconciliation tooling. Live Zerodha work
