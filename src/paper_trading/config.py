@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import yaml
 
 from .market_data.quality import DataQualityAction, HistoricalDataQualityPolicy
+from .execution.paper import IntrabarAmbiguityPolicy, SlippageConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,10 +43,19 @@ class HistoricalDataSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperBrokerSettings:
+    fill_mode: str
+    intrabar_ambiguity: IntrabarAmbiguityPolicy
+    slippage: SlippageConfig
+    transaction_cost_bps: float
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     settings: Settings
     risk: RiskSettings
     historical_data: HistoricalDataSettings
+    paper_broker: PaperBrokerSettings
 
 
 def _read_yaml(path: Path) -> Mapping[str, Any]:
@@ -88,6 +98,23 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
             instrument_master=Path(historical_data["instrument_master"]),
             quality=quality,
         )
+        broker_data = settings_data.get("paper_broker", {})
+        slippage_data = broker_data.get("slippage", {})
+        paper_broker = PaperBrokerSettings(
+            fill_mode=str(broker_data.get("fill_mode", "candle")),
+            intrabar_ambiguity=IntrabarAmbiguityPolicy(
+                str(broker_data.get("intrabar_ambiguity", "conservative")).upper()
+            ),
+            slippage=SlippageConfig(
+                market_bps=float(slippage_data.get("market_bps", 0)),
+                stop_market_bps=float(slippage_data.get("stop_market_bps", 0)),
+            ),
+            transaction_cost_bps=float(broker_data.get("transaction_cost_bps", 0)),
+        )
+        if paper_broker.fill_mode != "candle":
+            raise ValueError("paper_broker.fill_mode must be 'candle'")
+        if paper_broker.transaction_cost_bps < 0:
+            raise ValueError("transaction_cost_bps cannot be negative")
         risk = RiskSettings(**risk_data)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"invalid configuration in {root}: {exc}") from exc
@@ -100,4 +127,6 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
     ):
         if not 0 < value <= 100:
             raise ValueError("risk percentages must be in the range (0, 100]")
-    return AppConfig(settings=settings, risk=risk, historical_data=historical)
+    return AppConfig(
+        settings=settings, risk=risk, historical_data=historical, paper_broker=paper_broker
+    )

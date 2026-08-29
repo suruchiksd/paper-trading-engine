@@ -41,6 +41,35 @@ class SignalDirection(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class OrderRequest:
+    """Pre-risk order intent from a strategy or manual operator."""
+
+    instrument: Instrument
+    side: Side
+    order_type: OrderType
+    quantity: int
+    timestamp: datetime
+    signal_id: str | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
+    reference_price: float | None = None
+    limit_price: float | None = None
+    stop_price: float | None = None
+    oco_group_id: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.quantity <= 0:
+            raise ValueError("quantity must be positive")
+        if self.reference_price is not None and self.reference_price <= 0:
+            raise ValueError("reference_price must be positive")
+        if self.order_type in {OrderType.LIMIT, OrderType.STOP_LIMIT} and self.limit_price is None:
+            raise ValueError("limit_price is required for limit orders")
+        if self.order_type in {OrderType.STOP_MARKET, OrderType.STOP_LIMIT} and self.stop_price is None:
+            raise ValueError("stop_price is required for stop orders")
+
+
+@dataclass(frozen=True, slots=True)
 class Instrument:
     exchange: str
     tradingsymbol: str
@@ -131,6 +160,8 @@ class Order:
     quantity: int
     created_at: datetime
     signal_id: str | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
     limit_price: float | None = None
     stop_price: float | None = None
     status: OrderStatus = OrderStatus.NEW
@@ -139,6 +170,10 @@ class Order:
     order_id: str = field(default_factory=_id)
     broker_order_id: str | None = None
     rejection_reason: str | None = None
+    cancellation_reason: str | None = None
+    updated_at: datetime | None = None
+    oco_group_id: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:
@@ -160,6 +195,8 @@ class Fill:
     price: float
     timestamp: datetime
     signal_id: str | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
     fill_id: str = field(default_factory=_id)
     fees: float = 0.0
 
@@ -201,17 +238,23 @@ class Trade:
     entry_timestamp: datetime
     entry_fill_ids: tuple[str, ...]
     signal_id: str | None = None
+    strategy_id: str | None = None
+    strategy_version: str | None = None
     trade_id: str = field(default_factory=_id)
     exit_price: float | None = None
     exit_timestamp: datetime | None = None
     exit_fill_ids: tuple[str, ...] = ()
     realized_pnl: float | None = None
+    gross_realized_pnl: float | None = None
+    costs: float = 0.0
 
     def __post_init__(self) -> None:
         if self.quantity <= 0 or self.entry_price <= 0:
             raise ValueError("trade quantity and entry_price must be positive")
         if bool(self.exit_price is None) != bool(self.exit_timestamp is None):
             raise ValueError("exit_price and exit_timestamp must be provided together")
+        if self.costs < 0:
+            raise ValueError("costs cannot be negative")
 
     @property
     def is_open(self) -> bool:
@@ -226,3 +269,8 @@ class PortfolioSnapshot:
     realized_pnl: float
     unrealized_pnl: float
     positions: Mapping[str, int] = field(default_factory=dict)
+    costs: float = 0.0
+
+    @property
+    def total_pnl(self) -> float:
+        return self.realized_pnl + self.unrealized_pnl

@@ -1,37 +1,55 @@
 """Top-level orchestration boundary for the future event-driven engine."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
-from .events import CandleEvent, SignalEvent
+from .events import CandleEvent, FillEvent, OrderEvent, RiskEvent, SignalEvent
+from .execution import OrderManager
 from .market_data.interfaces import MarketDataFeed
-from .models import Signal
+from .models import Candle, Order, OrderRequest, Signal
+from .portfolio import Portfolio
+from .risk import RiskDecision, RiskManager
 from .strategies import BaseStrategy
 
 
 @dataclass(slots=True)
 class TradingEngine:
-    """Minimal composition root; execution behavior is intentionally absent.
+    """Synchronous composition root for replay and optional paper execution.
 
     Intended flow:
     market data -> tick/candle -> strategy -> signal -> risk -> order -> broker
     -> fill -> portfolio.
 
-    Strategies are held behind ``BaseStrategy`` and never receive a broker. Future
-    phases will inject explicit market-data, risk, broker, portfolio, and storage
-    interfaces here.
+    For every completed candle, already-open orders execute first, fills update the
+    portfolio, the close marks positions, and only then do strategies/manual controls
+    observe the candle. Consequently their orders cannot execute on that candle.
     """
 
     strategies: Sequence[BaseStrategy] = field(default_factory=tuple)
+    risk_manager: RiskManager | None = None
+    order_manager: OrderManager | None = None
+    portfolio: Portfolio | None = None
     emitted_signals: list[SignalEvent] = field(default_factory=list, init=False)
+    risk_events: list[RiskEvent] = field(default_factory=list, init=False)
+    order_events: list[OrderEvent] = field(default_factory=list, init=False)
+    fill_events: list[FillEvent] = field(default_factory=list, init=False)
+    last_candle: Candle | None = field(default=None, init=False)
 
     def run(self) -> None:
         raise NotImplementedError("engine orchestration is planned for a later phase")
 
-    def replay(self, feed: MarketDataFeed) -> int:
-        """Synchronously dispatch one replay feed; no risk or execution occurs."""
+    def replay(
+        self,
+        feed: MarketDataFeed,
+        *,
+        after_candle: Callable[[Candle, "TradingEngine"], None] | None = None,
+    ) -> int:
+        """Synchronously dispatch replay, optionally accepting manual controls."""
         self.emitted_signals.clear()
+        self.risk_events.clear()
+        self.order_events.clear()
+        self.fill_events.clear()
         dispatched = 0
         feed.start()
         try:
@@ -43,11 +61,52 @@ class TradingEngine:
             for event in feed.events():
                 if isinstance(event, CandleEvent):
                     dispatched += 1
-                    self._collect(strategy.on_candle(event.candle) for strategy in self.strategies)
+                    self.process_candle(event.candle)
+                    if after_candle is not None:
+                        after_candle(event.candle, self)
             self._collect(strategy.on_session_end(end) for strategy in self.strategies)
             return dispatched
         finally:
             feed.stop()
+
+    def process_candle(self, candle: Candle) -> None:
+        """Apply execution, accounting, marks, then expose a completed candle."""
+        fills = ()
+        if self.order_manager is not None:
+            fills = self.order_manager.process_candle(candle)
+            for fill in fills:
+                self.fill_events.append(FillEvent(fill))
+                if self.portfolio is not None:
+                    self.portfolio.process_fill(fill)
+        if self.portfolio is not None:
+            self.portfolio.mark(candle.instrument.key, candle.close)
+        for fill in fills:
+            self._collect(strategy.on_fill(fill) for strategy in self.strategies)
+        self.last_candle = candle
+        self._collect(strategy.on_candle(candle) for strategy in self.strategies)
+
+    def submit_order(self, request: OrderRequest) -> tuple[RiskDecision, Order]:
+        """Submit manual/synthetic intent through the same risk and OMS path."""
+        if self.risk_manager is None or self.order_manager is None or self.portfolio is None:
+            raise RuntimeError("risk_manager, order_manager, and portfolio are required")
+        decision = self.risk_manager.evaluate(
+            request, self.portfolio, self.order_manager.broker.active_orders()
+        )
+        self.risk_events.append(
+            RiskEvent(request.timestamp, decision.approved, decision.reason, request.signal_id)
+        )
+        if decision.approved:
+            approved = replace(request, quantity=decision.approved_quantity)
+            order = self.order_manager.submit(approved)
+        else:
+            order = self.order_manager.register_rejection(request, decision.reason)
+        self.order_events.append(OrderEvent(order))
+        return decision, order
+
+    def cancel_order(self, order_id: str, timestamp: datetime, reason: str = "cancelled by user") -> Order:
+        if self.order_manager is None:
+            raise RuntimeError("order_manager is required")
+        return self.order_manager.cancel(order_id, timestamp, reason)
 
     def _collect(self, groups: Iterable[Iterable[Signal]]) -> None:
         for signals in groups:

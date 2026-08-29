@@ -13,3 +13,10 @@ historical_data:
     duplicate_timestamps: error
     invalid_ohlc: error
     missing_bars: error
+paper_broker:
+  fill_mode: candle
+  intrabar_ambiguity: conservative
+  slippage:
+    market_bps: 2.0
+    stop_market_bps: 3.0
+  transaction_cost_bps: 0.0

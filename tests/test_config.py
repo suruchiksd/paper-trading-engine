@@ -12,3 +12,5 @@ def test_example_configuration_loads() -> None:
     assert config.risk.maximum_positions == 5
     assert config.historical_data.equities_subdir == "equities"
     assert config.historical_data.quality.invalid_ohlc == "ERROR"
+    assert config.paper_broker.intrabar_ambiguity == "CONSERVATIVE"
+    assert config.paper_broker.slippage.market_bps == 2.0

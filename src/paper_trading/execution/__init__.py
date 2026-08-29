@@ -1,2 +1,27 @@
-"""Broker and order-management implementations (future)."""
+"""Broker boundary, order lifecycle, costs, and deterministic paper execution."""
 
+from .broker import Broker, BrokerUpdate
+from .costs import BasisPointsTransactionCosts, NoTransactionCosts, TransactionCostModel
+from .manager import OrderManager
+from .orders import InvalidOrderTransition, transition_order
+from .paper import (
+    AmbiguousExecutionError,
+    IntrabarAmbiguityPolicy,
+    PaperBroker,
+    SlippageConfig,
+)
+
+__all__ = [
+    "AmbiguousExecutionError",
+    "BasisPointsTransactionCosts",
+    "Broker",
+    "BrokerUpdate",
+    "IntrabarAmbiguityPolicy",
+    "InvalidOrderTransition",
+    "NoTransactionCosts",
+    "OrderManager",
+    "PaperBroker",
+    "SlippageConfig",
+    "TransactionCostModel",
+    "transition_order",
+]

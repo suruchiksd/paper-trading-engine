@@ -5,6 +5,7 @@ from .models import (
     Fill,
     Instrument,
     Order,
+    OrderRequest,
     OrderStatus,
     OrderType,
     PortfolioSnapshot,
@@ -21,6 +22,7 @@ __all__ = [
     "Fill",
     "Instrument",
     "Order",
+    "OrderRequest",
     "OrderStatus",
     "OrderType",
     "PortfolioSnapshot",
@@ -31,4 +33,3 @@ __all__ = [
     "Tick",
     "Trade",
 ]
-
