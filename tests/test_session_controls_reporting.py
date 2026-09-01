@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -181,10 +181,11 @@ def test_stale_squareoff_never_fabricates_fill():
 
 def test_intent_persists_through_fill_trade_and_restart_and_exports(tmp_path: Path):
     now = [datetime(2026, 9, 1, 10, 0, tzinfo=IST)]
+    utc_start = datetime(2026, 9, 1, 4, 30, tzinfo=UTC)
     store = SQLiteStore(SQLiteDatabase(tmp_path / "state.sqlite"))
     sessions = SessionService(store)
-    session = sessions.create(date(2026, 9, 1), "LIVE_PAPER", 100_000, timestamp=now[0])
-    sessions.start(session.session_id, now[0])
+    session = sessions.create(date(2026, 9, 1), "LIVE_PAPER", 100_000, timestamp=utc_start)
+    sessions.start(session.session_id, utc_start)
     quotes = LiveQuoteStore()
     broker = LivePaperBroker(quotes, lambda: health(), lambda: now[0])
     manager = OrderManager(broker, iter(("PAPER-BUY", "PAPER-SELL", "PAPER-CANCEL")).__next__)
@@ -230,3 +231,26 @@ def test_intent_persists_through_fill_trade_and_restart_and_exports(tmp_path: Pa
             "session_id", "symbol", "quantity", "direction", "intent", "average_entry",
             "last_mark", "unrealized_pnl",
         ]
+
+    report_dir = tmp_path / "reports" / session.session_id
+    with (report_dir / "session_summary.csv").open() as stream:
+        exported_summary = next(csv.DictReader(stream))
+    assert exported_summary["started_at"] == "2026-09-01T10:00:00+05:30"
+    assert exported_summary["ended_at"] == "2026-09-01T10:00:02+05:30"
+
+    timestamp_fields = {
+        "orders.csv": ("created_at", "updated_at"),
+        "fills.csv": ("timestamp", "quote_exchange_timestamp", "quote_received_timestamp"),
+        "trades.csv": ("entry_timestamp", "exit_timestamp"),
+        "risk_events.csv": ("timestamp",),
+        "event_journal.csv": ("timestamp",),
+    }
+    for filename, fields in timestamp_fields.items():
+        with (report_dir / filename).open() as stream:
+            rows = list(csv.DictReader(stream))
+        assert rows
+        for row in rows:
+            for field in fields:
+                if row[field]:
+                    assert datetime.fromisoformat(row[field]).tzinfo is not None
+                    assert row[field].endswith("+05:30")

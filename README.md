@@ -275,6 +275,8 @@ fields cover lifecycle/capital/P&L, order/fill/trade counts, wins/losses, intent
 open-position counts, rejection count, and final feed counters when the session
 recorded them. Optional export after successful completion is independently
 configured; export failure cannot roll back trading records.
+All user-facing exported datetimes are normalized to timezone-aware Asia/Kolkata
+ISO 8601 values with the `+05:30` offset, regardless of their durable stored offset.
 
 Live candles use the same `Candle(interval="1minute", completed=True)` domain model
 and Asia/Kolkata start timestamp as historical candles. A candle finalizes when the

@@ -5,11 +5,25 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from .models import Side, TradeIntent
 from .storage import SQLiteStore, SessionService
+
+EXPORT_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _export_timestamp(value: datetime | str | None) -> str | None:
+    """Serialize an aware timestamp consistently in the user-facing IST timezone."""
+    if value is None or value == "":
+        return None
+    timestamp = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ValueError("cannot export a timezone-naive timestamp")
+    return timestamp.astimezone(EXPORT_TIMEZONE).isoformat()
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +71,8 @@ class SessionExporter:
         positions = portfolio.open_positions
         return SessionSummary(
             session.session_id, session.trading_date.isoformat(), session.mode,
-            str(session.status), session.started_at.isoformat() if session.started_at else None,
-            session.ended_at.isoformat() if session.ended_at else None,
+            str(session.status), _export_timestamp(session.started_at),
+            _export_timestamp(session.ended_at),
             session.starting_capital, portfolio.equity, portfolio.cash,
             portfolio.gross_realized_pnl, portfolio.total_costs, portfolio.realized_pnl,
             portfolio.unrealized_pnl, portfolio.total_pnl, counts["orders"], counts["fills"],
@@ -89,8 +103,10 @@ class SessionExporter:
             "oco_group_id",
         )
         paths.append(self._write(destination / "orders.csv", ({
-            "session_id": session_id, "order_id": o.order_id, "created_at": o.created_at,
-            "updated_at": o.updated_at, "symbol": o.instrument.tradingsymbol, "side": o.side,
+            "session_id": session_id, "order_id": o.order_id,
+            "created_at": _export_timestamp(o.created_at),
+            "updated_at": _export_timestamp(o.updated_at),
+            "symbol": o.instrument.tradingsymbol, "side": o.side,
             "quantity": o.quantity, "order_type": o.order_type, "intent": o.intent,
             "limit_price": o.limit_price, "trigger_price": o.stop_price, "status": o.status,
             "filled_quantity": o.filled_quantity, "average_fill_price": o.average_fill_price,
@@ -116,8 +132,8 @@ class SessionExporter:
         paths.append(self._write(destination / "trades.csv", ({
             "session_id": session_id, "trade_id": t.trade_id, "symbol": t.instrument.tradingsymbol,
             "direction": "LONG" if t.side is Side.BUY else "SHORT", "intent": t.intent,
-            "quantity": t.quantity, "entry_timestamp": t.entry_timestamp,
-            "entry_price": t.entry_price, "exit_timestamp": t.exit_timestamp,
+            "quantity": t.quantity, "entry_timestamp": _export_timestamp(t.entry_timestamp),
+            "entry_price": t.entry_price, "exit_timestamp": _export_timestamp(t.exit_timestamp),
             "exit_price": t.exit_price, "gross_pnl": t.gross_realized_pnl, "costs": t.costs,
             "net_pnl": t.realized_pnl, "strategy_id": t.strategy_id,
             "strategy_version": t.strategy_version, "signal_id": t.signal_id,
@@ -133,12 +149,14 @@ class SessionExporter:
             "last_mark", "unrealized_pnl",
         )))
         paths.append(self._write(
-            destination / "risk_events.csv", self.store.load_risk_events(session_id),
+            destination / "risk_events.csv",
+            self._normalize_row_timestamps(self.store.load_risk_events(session_id), ("timestamp",)),
             ("risk_event_id", "session_id", "timestamp", "approved", "reason",
              "approved_quantity", "signal_id", "order_id", "metadata_json"),
         ))
         paths.append(self._write(
-            destination / "event_journal.csv", self.store.load_event_journal(session_id),
+            destination / "event_journal.csv",
+            self._normalize_row_timestamps(self.store.load_event_journal(session_id), ("timestamp",)),
             ("event_id", "session_id", "timestamp", "event_type", "entity_type", "entity_id",
              "metadata_json"),
         ))
@@ -149,13 +167,13 @@ class SessionExporter:
         execution = order.metadata.get("live_execution") or {}
         return {
             "session_id": session_id, "fill_id": fill.fill_id, "order_id": fill.order_id,
-            "timestamp": fill.timestamp, "symbol": fill.instrument.tradingsymbol,
+            "timestamp": _export_timestamp(fill.timestamp), "symbol": fill.instrument.tradingsymbol,
             "side": fill.side, "quantity": fill.quantity, "fill_price": fill.price,
             "transaction_cost": fill.fees, "intent": fill.intent,
             "execution_source": execution.get("source"), "observed_ltp": execution.get("observed_last"),
             "observed_bid": execution.get("observed_bid"), "observed_ask": execution.get("observed_ask"),
-            "quote_exchange_timestamp": execution.get("quote_exchange_timestamp"),
-            "quote_received_timestamp": execution.get("quote_received_timestamp"),
+            "quote_exchange_timestamp": _export_timestamp(execution.get("quote_exchange_timestamp")),
+            "quote_received_timestamp": _export_timestamp(execution.get("quote_received_timestamp")),
             "fallback": execution.get("fallback"),
         }
 
@@ -164,6 +182,16 @@ class SessionExporter:
             if row["event_type"] == "LIVE_FEED_FINAL_HEALTH":
                 return json.loads(row["metadata_json"])
         return {}
+
+    @staticmethod
+    def _normalize_row_timestamps(
+        rows: Iterable[dict[str, Any]], fields: tuple[str, ...]
+    ) -> Iterable[dict[str, Any]]:
+        for row in rows:
+            normalized = dict(row)
+            for field in fields:
+                normalized[field] = _export_timestamp(normalized.get(field))
+            yield normalized
 
     @staticmethod
     def _write(path: Path, rows: Iterable[dict[str, Any]], fieldnames=None) -> Path:
