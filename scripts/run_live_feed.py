@@ -50,6 +50,7 @@ def main() -> int:
         stale_after_seconds=live.stale_after_seconds,
         reconnect_max_tries=live.reconnect_max_tries,
         reconnect_max_delay=live.reconnect_max_delay,
+        candle_finalize_delay_seconds=live.candle_finalize_delay_seconds,
     )
     engine = TradingEngine()  # deliberately has no execution components
     print("Connecting read-only live market data; no orders can be generated.")
@@ -80,6 +81,13 @@ def main() -> int:
         print("Stopping live feed...")
     finally:
         feed.stop()
+        for event in feed.finalize_candles():
+            engine.dispatch_market_event(event)
+            candle = event.candle
+            print(
+                f"FINAL CANDLE {candle.timestamp.isoformat()} {candle.instrument.tradingsymbol} "
+                f"O={candle.open} H={candle.high} L={candle.low} C={candle.close} V={candle.volume}"
+            )
     return 0
 
 

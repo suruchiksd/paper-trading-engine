@@ -7,10 +7,10 @@ portfolio accounting, persistence, and reporting.
 ## Current status and architecture
 
 The engine supports read-only historical Parquet replay, deterministic candle-based
-paper execution, optional durable SQLite sessions, and read-only Zerodha WebSocket
-market data. It has no trading strategy, live order path, or real broker
-implementation. The central rule remains: **a strategy never calls a broker
-directly**.
+paper execution, durable SQLite sessions, read-only Zerodha WebSocket market data,
+and manual live paper trading. It has no trading strategy or real broker
+implementation. The central rules remain: **a strategy never calls a broker
+directly**, and **no Zerodha order API is used**.
 
 ```text
 Historical data -> ReplayFeed -> TradingEngine -> Strategy/manual OrderRequest
@@ -163,12 +163,11 @@ python3 scripts/session_status.py --session SESSION_ID
 
 Use `--database /path/to/state.sqlite` with either script to override configuration.
 
-## Read-only Zerodha live market data
+## Zerodha live data and manual live paper trading
 
-**LIVE MARKET DATA DOES NOT MEAN LIVE PAPER TRADING YET.** The live CLI constructs a
-`TradingEngine` without risk, order-manager, broker, portfolio, or persistence
-components. It cannot place or simulate orders and does not store raw ticks in
-SQLite.
+**THIS MODE DOES NOT PLACE ZERODHA ORDERS.** Kite is used only for read-only market
+data. `run_live_feed.py` remains a read-only monitor. The separate manual command
+uses a local `LivePaperBroker`, the existing risk/OMS/portfolio pipeline, and SQLite.
 
 ```text
 KiteTicker callback -> normalize/enqueue Tick -> OneMinuteCandleBuilder
@@ -210,11 +209,39 @@ python3 scripts/run_live_feed.py --symbol RELIANCE --symbol SBIN
 Completed candles print by default; `--ticks` also prints normalized ticks. Ctrl+C
 stops reconnect attempts and closes the socket cleanly.
 
+Run a durable manual paper session (all IDs begin with `PAPER-`):
+
+```bash
+.venv/bin/python scripts/run_manual_live_paper.py --symbol RELIANCE --symbol SBIN
+.venv/bin/python scripts/run_manual_live_paper.py --resume SESSION_ID \
+  --symbol RELIANCE --symbol SBIN
+```
+
+Commands include `buy RELIANCE 10 market`, `sell SBIN 10 limit 812.50`,
+`sell RELIANCE 10 stop 1280`, `quote`, `orders`, `positions`, `trades`, `pnl`,
+`health`, `cancel PAPER-ID`, and `quit`. Unsubscribed symbols are rejected.
+Every manual request passes feed/quote freshness checks, then the existing
+`RiskManager`, `OrderManager`, local broker, portfolio, and persistence boundary.
+
+Live MARKET buys use ask and sells use bid; deterministic adverse slippage applies.
+If configured, absent depth falls back to LTP and records that degraded source in
+audit metadata. LIMIT orders require an executable ask/bid through the limit and
+never violate it after slippage. STOP_MARKET triggers from observed LTP, then fills
+from the currently observable executable side—so jumps through a stop are retained.
+There is no queue-position, partial-fill, or depth-liquidity model.
+
+New orders require a connected, healthy feed and a fresh quote for that instrument.
+Stale/disconnected data never fills existing orders; they remain open until a fresh
+newly observed tick arrives. Marks use LTP and cannot cause fills. On resume, cash,
+positions, P&L and open local orders are restored from SQLite. Events missed while
+offline are deliberately not inferred or replayed, and this limitation is journaled.
+
 Live candles use the same `Candle(interval="1minute", completed=True)` domain model
-and Asia/Kolkata start timestamp as historical candles. A candle finalizes only when
-the next tick for that same instrument reaches a later minute. Another instrument's
-tick does not finalize it, and an inactive symbol may therefore retain an incomplete
-candle indefinitely. Missing minutes are counted/logged but never manufactured.
+and Asia/Kolkata start timestamp as historical candles. A candle finalizes when the
+next tick for that instrument reaches a later minute, or shortly after its minute
+ends through the configurable timer finalizer. Clean shutdown flushes the last
+observed candle. Another instrument never creates a candle for an inactive symbol;
+missing minutes are counted/logged but never manufactured.
 On rollover, the completed prior-minute `CandleEvent` is dispatched before the new
 minute's `TickEvent`, preventing consumers from seeing the new price first.
 
@@ -234,8 +261,9 @@ client are interpreted as Asia/Kolkata, while absent exchange timestamps remain
 
 Feed health exposes connection state, last receive/exchange timestamps, tick count,
 reconnect count, malformed/dropped/duplicate/out-of-order counts, volume regressions,
-last error, and injected-clock staleness. Default staleness is ten seconds and is
-observational only—it does not control risk or orders in this phase.
+last error, and injected-clock staleness. Default staleness is ten seconds. Manual
+live-paper order admission and fill evaluation both enforce feed and per-symbol
+quote freshness.
 
 KiteTicker's bounded automatic reconnect is enabled. Subscriptions and full mode are
 reapplied on connection, temporary disconnects remain reconnectable, and exhausted
@@ -253,7 +281,7 @@ src/paper_trading/
   engine.py                Deterministic orchestration
   market_data/             Parquet/instrument adapters and replay feed
                            Zerodha normalization, live feed, health, candle builder
-  execution/               Broker protocol, PaperBroker, OMS, costs, transitions
+  execution/               Broker protocol, historical/live paper brokers, OMS
   portfolio/               Weighted-average in-memory accounting
   risk/                    Deterministic pre-trade risk checks
   storage/                 SQLite schema, repositories, lifecycle, and recovery
@@ -264,16 +292,16 @@ tests/                     Unit and integration tests with small fixtures
 ## Deferred
 
 Detailed Indian-equity charges, margin/borrow rules, partial fills, queue simulation,
-STOP_LIMIT execution, exchange calendars, actual strategies, live-paper interfaces,
-Zerodha WebSocket/API access, and real execution are intentionally absent. SQLite is
+STOP_LIMIT execution, exchange calendars, actual strategies, dynamic subscriptions,
+and real execution are intentionally absent. SQLite is
 local single-process-oriented storage; distributed writers and automated schema
 migrations are not supported. Marks are checkpointed in place while historical
 snapshots are written only at session and fill boundaries.
 
-Live limitations include no timer-based candle finalizer, exchange calendar, raw-tick
-archive, full-depth model, latency metrics beyond timestamps, or cross-process queue.
-No candle is emitted until a later tick arrives for the same instrument.
+Live limitations include no exchange calendar, raw-tick archive, full-depth model,
+latency metrics beyond timestamps, or cross-process queue. The terminal and feed
+threads only enqueue work; one main loop owns trading and durable-state mutations.
 
-The recommended next phase is read-only session reporting/export built on the audit
-journal and snapshots, followed by explicit reconciliation tooling. Live Zerodha work
-should remain a separate later phase.
+The recommended next phase is operational hardening of manual paper sessions:
+end-of-day controls, reconciliation/report export, and supervised failure drills.
+Strategies and real Zerodha execution should remain separate later phases.

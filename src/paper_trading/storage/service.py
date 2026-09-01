@@ -63,6 +63,11 @@ class SessionRecorder:
     def checkpoint_positions(self, portfolio: Portfolio, timestamp: datetime) -> None:
         self.store.checkpoint_positions(self.session_id, portfolio, timestamp)
 
+    def record_audit(
+        self, event_type: str, timestamp: datetime, metadata: Mapping[str, object] | None = None
+    ) -> None:
+        self.store.record_journal_event(self.session_id, timestamp, event_type, metadata)
+
 
 class SessionService:
     def __init__(self, store: SQLiteStore) -> None:

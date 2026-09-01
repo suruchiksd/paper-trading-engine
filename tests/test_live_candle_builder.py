@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from paper_trading.market_data import (
@@ -79,3 +79,15 @@ def test_volume_regression_policy_is_explicit() -> None:
     drop = OneMinuteCandleBuilder(VolumeRegressionPolicy.DROP_TICK)
     drop.process(tick(RELIANCE, 15, 1, 100, 1000))
     assert drop.process(tick(RELIANCE, 15, 2, 101, 10)).disposition is TickDisposition.VOLUME_RESET
+
+
+def test_timer_finalizes_only_observed_candle_exactly_once() -> None:
+    builder = OneMinuteCandleBuilder()
+    builder.process(tick(RELIANCE, 15, 10, 100, 100))
+    builder.process(tick(RELIANCE, 15, 50, 101, 110))
+    due = datetime(2026, 8, 31, 9, 16, 2, tzinfo=IST)
+    completed = builder.finalize_due(due, delay_seconds=2)
+    assert len(completed) == 1
+    assert completed[0].timestamp.minute == 15
+    assert builder.finalize_due(due + timedelta(seconds=10), delay_seconds=2) == ()
+    assert builder.flush() == ()  # no artificial 09:16 candle

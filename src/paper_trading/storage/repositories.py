@@ -162,6 +162,7 @@ class SQLiteStore:
         portfolio: Portfolio,
         timestamp: datetime,
     ) -> None:
+        orders = tuple(orders)
         fills = tuple(fills)
         trades = tuple(trades)
         with self.database.transaction() as connection:
@@ -181,7 +182,17 @@ class SQLiteStore:
                     "FILL_APPLIED",
                     "fill",
                     fill.fill_id,
-                    {"order_id": fill.order_id},
+                    {
+                        "order_id": fill.order_id,
+                        "execution": next(
+                            (
+                                order.metadata.get("live_execution")
+                                for order in orders
+                                if order.order_id == fill.order_id
+                            ),
+                            None,
+                        ),
+                    },
                 )
             for trade in trades:
                 self._insert_trade(connection, session_id, trade)
@@ -309,6 +320,16 @@ class SQLiteStore:
                 for table in ("orders", "fills", "trades", "risk_events", "event_journal")
             }
 
+    def record_journal_event(
+        self,
+        session_id: str,
+        timestamp: datetime,
+        event_type: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        with self.database.transaction() as connection:
+            self._journal(connection, session_id, timestamp, event_type, metadata=metadata)
+
     @staticmethod
     def _upsert_order(connection: sqlite3.Connection, session_id: str, order: Order) -> None:
         instrument = order.instrument
@@ -330,7 +351,8 @@ class SQLiteStore:
                average_fill_price=excluded.average_fill_price,
                status=excluded.status, updated_at=excluded.updated_at,
                rejection_reason=excluded.rejection_reason,
-               cancellation_reason=excluded.cancellation_reason""",
+               cancellation_reason=excluded.cancellation_reason,
+               metadata_json=excluded.metadata_json""",
             values,
         )
 

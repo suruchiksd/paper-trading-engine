@@ -141,6 +141,7 @@ class ZerodhaLiveFeed:
         clock: Callable[[], datetime] | None = None,
         ticker_factory: Callable[..., KiteTickerLike] | None = None,
         candle_builder: OneMinuteCandleBuilder | None = None,
+        candle_finalize_delay_seconds: float = 2,
     ) -> None:
         if not api_key or not access_token:
             raise ValueError("KITE_API_KEY and KITE_ACCESS_TOKEN are required")
@@ -159,6 +160,7 @@ class ZerodhaLiveFeed:
         self.health = FeedHealth(stale_after_seconds, self.clock)
         self.normalizer = ZerodhaTickNormalizer(instruments, self.clock)
         self.candle_builder = candle_builder or OneMinuteCandleBuilder()
+        self.candle_finalize_delay_seconds = candle_finalize_delay_seconds
         self._ticker_factory = ticker_factory or self._default_ticker_factory
         self._ticker: KiteTickerLike | None = None
         self._queue: Queue[object] = Queue(maxsize=queue_size)
@@ -219,6 +221,10 @@ class ZerodhaLiveFeed:
             except Empty:
                 if self._fatal_error is not None:
                     raise self._fatal_error
+                for candle in self.candle_builder.finalize_due(
+                    self.clock(), self.candle_finalize_delay_seconds
+                ):
+                    yield CandleEvent(candle)
                 continue
             if item is _STOP:
                 break
@@ -261,6 +267,10 @@ class ZerodhaLiveFeed:
         elif snapshot.state.value == "HEALTHY":
             self._stale_logged = False
         return snapshot
+
+    def finalize_candles(self) -> tuple[CandleEvent, ...]:
+        """Return final observed candles once during clean shutdown."""
+        return tuple(CandleEvent(candle) for candle in self.candle_builder.flush())
 
     def _on_ticks(self, ws: KiteTickerLike, raw_ticks: list[Mapping[str, Any]]) -> None:
         received = self.clock()

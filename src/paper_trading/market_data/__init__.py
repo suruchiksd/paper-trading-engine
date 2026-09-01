@@ -8,6 +8,7 @@ from .candle_builder import (
     VolumeRegressionPolicy,
 )
 from .health import FeedHealth, FeedHealthSnapshot, FeedState
+from .quotes import LiveQuote, LiveQuoteStore
 from .credentials import KiteCredentials
 from .instruments import (
     AmbiguousInstrumentError,
@@ -46,6 +47,8 @@ __all__ = [
     "TickDisposition",
     "VolumeRegressionPolicy",
     "LiveFeedConnectionError",
+    "LiveQuote",
+    "LiveQuoteStore",
     "LiveTickError",
     "UnknownInstrumentTokenError",
     "ZerodhaLiveFeed",

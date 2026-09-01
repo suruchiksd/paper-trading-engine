@@ -32,3 +32,9 @@ live_market_data:
     - RELIANCE
   reconnect_max_tries: 10
   reconnect_max_delay: 30
+  candle_finalize_delay_seconds: 2
+live_paper:
+  max_quote_age_seconds: 5
+  allow_ltp_fallback: true
+  market_slippage_bps: 2
+  stop_market_slippage_bps: 3

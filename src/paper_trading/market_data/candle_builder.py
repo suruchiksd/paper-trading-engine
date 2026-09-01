@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from ..models import Candle, Instrument, Tick
@@ -110,6 +110,31 @@ class OneMinuteCandleBuilder:
             self._fingerprints[key].add(fingerprint)
         disposition = TickDisposition.VOLUME_RESET if volume_reset else TickDisposition.ACCEPTED
         return CandleBuildUpdate(disposition, completed, missing_minutes)
+
+    def finalize_due(self, now: datetime, delay_seconds: float = 0) -> tuple[Candle, ...]:
+        """Finalize observed states whose minute has ended; fabricate nothing."""
+        due: list[tuple[str, _CandleState]] = []
+        for key, state in self._states.items():
+            deadline = state.minute + timedelta(minutes=1, seconds=delay_seconds)
+            if now >= deadline:
+                due.append((key, state))
+        candles = []
+        for key, state in sorted(due, key=lambda item: (item[1].minute, item[0])):
+            candles.append(self._finalize(state))
+            self._last_finalized[key] = state.minute
+            self._states.pop(key, None)
+            self._fingerprints.pop(key, None)
+        return tuple(candles)
+
+    def flush(self) -> tuple[Candle, ...]:
+        """Finalize every observed in-progress candle during a clean session close."""
+        candles = []
+        for key, state in sorted(self._states.items(), key=lambda item: (item[1].minute, item[0])):
+            candles.append(self._finalize(state))
+            self._last_finalized[key] = state.minute
+        self._states.clear()
+        self._fingerprints.clear()
+        return tuple(candles)
 
     @staticmethod
     def _new_state(tick: Tick, minute: datetime, baseline: int | None) -> _CandleState:

@@ -34,6 +34,7 @@ class TradingEngine:
     order_manager: OrderManager | None = None
     portfolio: Portfolio | None = None
     persistence: SessionRecorder | None = None
+    pre_trade_check: Callable[[OrderRequest], RiskDecision | None] | None = None
     emitted_signals: list[SignalEvent] = field(default_factory=list, init=False)
     risk_events: list[RiskEvent] = field(default_factory=list, init=False)
     order_events: list[OrderEvent] = field(default_factory=list, init=False)
@@ -102,6 +103,34 @@ class TradingEngine:
         """Dispatch a normalized live tick without invoking execution components."""
         self._collect(strategy.on_tick(tick) for strategy in self.strategies)
 
+    def process_live_tick(self, tick: Tick) -> None:
+        """Execute local live-paper orders, account fills, then dispatch the tick."""
+        fills = ()
+        trades = []
+        if self.order_manager is not None:
+            fills = self.order_manager.process_tick(tick)
+            for fill in fills:
+                self.fill_events.append(FillEvent(fill))
+                if self.portfolio is not None:
+                    trades.extend(self.portfolio.process_fill(fill))
+        if self.portfolio is not None:
+            self.portfolio.mark(tick.instrument.key, tick.last_price)
+        if self.persistence is not None and self.portfolio is not None:
+            if fills:
+                assert self.order_manager is not None
+                self.persistence.record_execution(
+                    self.order_manager.orders.values(),
+                    fills,
+                    trades,
+                    self.portfolio,
+                    tick.received_timestamp,
+                )
+            elif self.portfolio.open_positions:
+                self.persistence.checkpoint_positions(self.portfolio, tick.received_timestamp)
+        for fill in fills:
+            self._collect(strategy.on_fill(fill) for strategy in self.strategies)
+        self.process_tick(tick)
+
     def dispatch_market_event(self, event: TickEvent | CandleEvent) -> None:
         if isinstance(event, TickEvent):
             self.process_tick(event.tick)
@@ -112,9 +141,11 @@ class TradingEngine:
         """Submit manual/synthetic intent through the same risk and OMS path."""
         if self.risk_manager is None or self.order_manager is None or self.portfolio is None:
             raise RuntimeError("risk_manager, order_manager, and portfolio are required")
-        decision = self.risk_manager.evaluate(
-            request, self.portfolio, self.order_manager.broker.active_orders()
-        )
+        decision = self.pre_trade_check(request) if self.pre_trade_check is not None else None
+        if decision is None:
+            decision = self.risk_manager.evaluate(
+                request, self.portfolio, self.order_manager.broker.active_orders()
+            )
         self.risk_events.append(
             RiskEvent(request.timestamp, decision.approved, decision.reason, request.signal_id)
         )

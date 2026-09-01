@@ -65,6 +65,15 @@ class LiveMarketDataSettings:
     symbols: tuple[str, ...]
     reconnect_max_tries: int
     reconnect_max_delay: int
+    candle_finalize_delay_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class LivePaperSettings:
+    max_quote_age_seconds: float
+    allow_ltp_fallback: bool
+    market_slippage_bps: float
+    stop_market_slippage_bps: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +84,7 @@ class AppConfig:
     paper_broker: PaperBrokerSettings
     persistence: PersistenceSettings
     live_market_data: LiveMarketDataSettings
+    live_paper: LivePaperSettings
 
 
 def _read_yaml(path: Path) -> Mapping[str, Any]:
@@ -156,6 +166,9 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
             symbols=tuple(str(symbol) for symbol in live_data.get("symbols", ["RELIANCE"])),
             reconnect_max_tries=int(live_data.get("reconnect_max_tries", 10)),
             reconnect_max_delay=int(live_data.get("reconnect_max_delay", 30)),
+            candle_finalize_delay_seconds=float(
+                live_data.get("candle_finalize_delay_seconds", 2)
+            ),
         )
         if live_market_data.provider != "zerodha":
             raise ValueError("live_market_data.provider must be 'zerodha'")
@@ -167,6 +180,21 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
             raise ValueError("at least one live symbol is required")
         if live_market_data.reconnect_max_tries < 0 or live_market_data.reconnect_max_delay <= 0:
             raise ValueError("invalid live reconnect settings")
+        if live_market_data.candle_finalize_delay_seconds < 0:
+            raise ValueError("candle_finalize_delay_seconds cannot be negative")
+        live_paper_data = settings_data.get("live_paper", {})
+        live_paper = LivePaperSettings(
+            max_quote_age_seconds=float(live_paper_data.get("max_quote_age_seconds", 5)),
+            allow_ltp_fallback=bool(live_paper_data.get("allow_ltp_fallback", True)),
+            market_slippage_bps=float(live_paper_data.get("market_slippage_bps", 2)),
+            stop_market_slippage_bps=float(
+                live_paper_data.get("stop_market_slippage_bps", 3)
+            ),
+        )
+        if live_paper.max_quote_age_seconds <= 0:
+            raise ValueError("live_paper.max_quote_age_seconds must be positive")
+        if live_paper.market_slippage_bps < 0 or live_paper.stop_market_slippage_bps < 0:
+            raise ValueError("live paper slippage cannot be negative")
         risk = RiskSettings(**risk_data)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"invalid configuration in {root}: {exc}") from exc
@@ -186,4 +214,5 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
         paper_broker=paper_broker,
         persistence=persistence,
         live_market_data=live_market_data,
+        live_paper=live_paper,
     )

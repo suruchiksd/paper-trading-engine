@@ -3,6 +3,7 @@
 from .broker import Broker, BrokerUpdate
 from .costs import BasisPointsTransactionCosts, NoTransactionCosts, TransactionCostModel
 from .manager import OrderManager
+from .live import LiveExecutionConfig, LivePaperBroker
 from .orders import InvalidOrderTransition, transition_order
 from .paper import (
     AmbiguousExecutionError,
@@ -18,6 +19,8 @@ __all__ = [
     "BrokerUpdate",
     "IntrabarAmbiguityPolicy",
     "InvalidOrderTransition",
+    "LiveExecutionConfig",
+    "LivePaperBroker",
     "NoTransactionCosts",
     "OrderManager",
     "PaperBroker",
