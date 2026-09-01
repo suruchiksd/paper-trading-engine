@@ -94,6 +94,7 @@ class PaperBroker:
                     fees=self.cost_model.calculate(
                         order.side, order.quantity - order.filled_quantity, price
                     ),
+                    intent=order.intent,
                 )
             )
         for order, _ in selected:

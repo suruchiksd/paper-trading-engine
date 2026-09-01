@@ -18,6 +18,7 @@ from ..models import (
     SessionStatus,
     Side,
     Trade,
+    TradeIntent,
     TradingSession,
 )
 from ..portfolio import Portfolio
@@ -241,6 +242,7 @@ class SQLiteStore:
                 updated_at=_dt(row["updated_at"]),
                 oco_group_id=row["oco_group_id"],
                 metadata=json.loads(row["metadata_json"]),
+                intent=TradeIntent(json.loads(row["metadata_json"]).get("intent", "INTRADAY")),
             )
             for row in rows
         ]
@@ -250,6 +252,7 @@ class SQLiteStore:
             rows = connection.execute(
                 "SELECT * FROM fills WHERE session_id=? ORDER BY sequence", (session_id,)
             ).fetchall()
+        intents = {order.order_id: order.intent for order in self.load_orders(session_id)}
         return [
             Fill(
                 order_id=row["order_id"],
@@ -263,6 +266,7 @@ class SQLiteStore:
                 strategy_version=row["strategy_version"],
                 fill_id=row["fill_id"],
                 fees=row["fees"],
+                intent=intents[row["order_id"]],
             )
             for row in rows
         ]
@@ -273,6 +277,7 @@ class SQLiteStore:
                 "SELECT * FROM trades WHERE session_id=? ORDER BY exit_timestamp, trade_id",
                 (session_id,),
             ).fetchall()
+        fills = {fill.fill_id: fill for fill in self.load_fills(session_id)}
         return [
             Trade(
                 instrument=_instrument(row),
@@ -291,6 +296,7 @@ class SQLiteStore:
                 realized_pnl=row["net_realized_pnl"],
                 gross_realized_pnl=row["gross_realized_pnl"],
                 costs=row["costs"],
+                intent=fills[json.loads(row["entry_fill_ids_json"])[0]].intent,
             )
             for row in rows
         ]
@@ -320,6 +326,22 @@ class SQLiteStore:
                 for table in ("orders", "fills", "trades", "risk_events", "event_journal")
             }
 
+    def load_risk_events(self, session_id: str) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM risk_events WHERE session_id=? ORDER BY timestamp, risk_event_id",
+                (session_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def load_event_journal(self, session_id: str) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM event_journal WHERE session_id=? ORDER BY event_id",
+                (session_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def record_journal_event(
         self,
         session_id: str,
@@ -342,7 +364,7 @@ class SQLiteStore:
             (order.eligible_after or order.created_at).isoformat(),
             order.updated_at.isoformat() if order.updated_at else None,
             order.broker_order_id, order.oco_group_id, order.rejection_reason,
-            order.cancellation_reason, _json(order.metadata),
+            order.cancellation_reason, _json({**order.metadata, "intent": order.intent}),
         )
         connection.execute(
             """INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)

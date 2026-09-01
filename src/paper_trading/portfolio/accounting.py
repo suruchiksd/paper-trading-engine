@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from ..models import Fill, PortfolioSnapshot, Position, Side, Trade
+from ..models import Fill, PortfolioSnapshot, Position, Side, Trade, TradeIntent
 
 
 @dataclass(slots=True)
@@ -17,6 +17,7 @@ class _PositionCampaign:
     signal_id: str | None = None
     strategy_id: str | None = None
     strategy_version: str | None = None
+    intent: TradeIntent = TradeIntent.INTRADAY
 
 
 class Portfolio:
@@ -58,7 +59,7 @@ class Portfolio:
 
     def process_fill(self, fill: Fill) -> tuple[Trade, ...]:
         key = fill.instrument.key
-        position = self.positions.setdefault(key, Position(fill.instrument))
+        position = self.positions.setdefault(key, Position(fill.instrument, intent=fill.intent))
         old_quantity = position.quantity
         signed_fill = fill.quantity if fill.side is Side.BUY else -fill.quantity
         self.cash -= signed_fill * fill.price + fill.fees
@@ -92,6 +93,7 @@ class Portfolio:
             gross_realized_pnl=gross,
             costs=costs,
             realized_pnl=net,
+            intent=campaign.intent,
         )
         self.closed_trades.append(trade)
         closed.append(trade)
@@ -120,7 +122,9 @@ class Portfolio:
                 signal_id=fill.signal_id,
                 strategy_id=fill.strategy_id,
                 strategy_version=fill.strategy_version,
+                intent=fill.intent,
             )
+            position.intent = fill.intent
         return tuple(closed)
 
     def _increase(self, position: Position, fill: Fill, signed_fill: int) -> None:
@@ -141,7 +145,9 @@ class Portfolio:
                 signal_id=fill.signal_id,
                 strategy_id=fill.strategy_id,
                 strategy_version=fill.strategy_version,
+                intent=fill.intent,
             )
+            position.intent = fill.intent
         else:
             campaign.quantity = position.quantity
             campaign.entry_fill_ids.append(fill.fill_id)
@@ -164,4 +170,3 @@ class Portfolio:
             positions={position.instrument.key: position.quantity for position in self.open_positions},
             costs=self.total_costs,
         )
-

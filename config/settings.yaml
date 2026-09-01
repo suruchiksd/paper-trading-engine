@@ -38,3 +38,13 @@ live_paper:
   allow_ltp_fallback: true
   market_slippage_bps: 2
   stop_market_slippage_bps: 3
+session_controls:
+  timezone: Asia/Kolkata
+  new_entry_cutoff: "15:00"
+  intraday_square_off_time: "15:15"
+  session_end_time: "15:30"
+  reject_new_entries_after_cutoff: true
+  auto_square_off_intraday: false
+  cancel_open_intraday_orders_at_eod: true
+  auto_export_on_complete: false
+  reports_path: data/sessions

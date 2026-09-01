@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from datetime import time
 from typing import Any, Mapping
 
 import yaml
@@ -77,6 +78,19 @@ class LivePaperSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionControlsSettings:
+    timezone: str
+    new_entry_cutoff: time
+    intraday_square_off_time: time
+    session_end_time: time
+    reject_new_entries_after_cutoff: bool
+    auto_square_off_intraday: bool
+    cancel_open_intraday_orders_at_eod: bool
+    auto_export_on_complete: bool
+    reports_path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     settings: Settings
     risk: RiskSettings
@@ -85,6 +99,7 @@ class AppConfig:
     persistence: PersistenceSettings
     live_market_data: LiveMarketDataSettings
     live_paper: LivePaperSettings
+    session_controls: SessionControlsSettings
 
 
 def _read_yaml(path: Path) -> Mapping[str, Any]:
@@ -195,6 +210,36 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
             raise ValueError("live_paper.max_quote_age_seconds must be positive")
         if live_paper.market_slippage_bps < 0 or live_paper.stop_market_slippage_bps < 0:
             raise ValueError("live paper slippage cannot be negative")
+        controls_data = settings_data.get("session_controls", {})
+        from .session_controls import parse_hhmm
+        reports_path = Path(controls_data.get("reports_path", "data/sessions"))
+        if not reports_path.is_absolute():
+            reports_path = root.parent / reports_path
+        session_controls = SessionControlsSettings(
+            timezone=str(controls_data.get("timezone", settings.timezone)),
+            new_entry_cutoff=parse_hhmm(str(controls_data.get("new_entry_cutoff", "15:00"))),
+            intraday_square_off_time=parse_hhmm(
+                str(controls_data.get("intraday_square_off_time", "15:15"))
+            ),
+            session_end_time=parse_hhmm(str(controls_data.get("session_end_time", "15:30"))),
+            reject_new_entries_after_cutoff=bool(
+                controls_data.get("reject_new_entries_after_cutoff", True)
+            ),
+            auto_square_off_intraday=bool(
+                controls_data.get("auto_square_off_intraday", False)
+            ),
+            cancel_open_intraday_orders_at_eod=bool(
+                controls_data.get("cancel_open_intraday_orders_at_eod", True)
+            ),
+            auto_export_on_complete=bool(controls_data.get("auto_export_on_complete", False)),
+            reports_path=reports_path,
+        )
+        if not (
+            session_controls.new_entry_cutoff
+            <= session_controls.intraday_square_off_time
+            <= session_controls.session_end_time
+        ):
+            raise ValueError("session control times must be in chronological order")
         risk = RiskSettings(**risk_data)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"invalid configuration in {root}: {exc}") from exc
@@ -215,4 +260,5 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
         persistence=persistence,
         live_market_data=live_market_data,
         live_paper=live_paper,
+        session_controls=session_controls,
     )

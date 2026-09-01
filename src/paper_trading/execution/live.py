@@ -113,6 +113,7 @@ class LivePaperBroker:
                     strategy_version=order.strategy_version,
                     fill_id=f"PAPER-FILL-{uuid4().hex}",
                     fees=self.cost_model.calculate(order.side, quantity, price),
+                    intent=order.intent,
                 )
             )
             self._orders.pop(order.order_id)

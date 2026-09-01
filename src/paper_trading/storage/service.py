@@ -240,6 +240,7 @@ class SessionService:
         fields = (
             "instrument",
             "side",
+            "intent",
             "quantity",
             "entry_timestamp",
             "exit_timestamp",

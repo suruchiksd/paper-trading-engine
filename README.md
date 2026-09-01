@@ -217,9 +217,11 @@ Run a durable manual paper session (all IDs begin with `PAPER-`):
   --symbol RELIANCE --symbol SBIN
 ```
 
-Commands include `buy RELIANCE 10 market`, `sell SBIN 10 limit 812.50`,
-`sell RELIANCE 10 stop 1280`, `quote`, `orders`, `positions`, `trades`, `pnl`,
-`health`, `cancel PAPER-ID`, and `quit`. Unsubscribed symbols are rejected.
+Commands include `buy RELIANCE 10 market intraday`,
+`sell SBIN 10 limit 812.50 swing`, `sell RELIANCE 10 stop 1280 intraday`,
+`squareoff intraday`, `complete`, `quote`, `orders`, `positions`, `trades`, `pnl`,
+`health`, `cancel PAPER-ID`, and `quit`. Intent defaults to the safer `INTRADAY`
+when omitted. Unsubscribed symbols are rejected.
 Every manual request passes feed/quote freshness checks, then the existing
 `RiskManager`, `OrderManager`, local broker, portfolio, and persistence boundary.
 
@@ -235,6 +237,44 @@ Stale/disconnected data never fills existing orders; they remain open until a fr
 newly observed tick arrives. Marks use LTP and cannot cause fills. On resume, cash,
 positions, P&L and open local orders are restored from SQLite. Events missed while
 offline are deliberately not inferred or replayed, and this limitation is journaled.
+
+`INTRADAY` and `SWING` describe holding intent independently of execution type.
+Intent follows the order into fills, the weighted-average position campaign, closed
+trades, persistence recovery, and reports. One symbol has one campaign: increasing
+it with a different intent is rejected as `HOLDING_INTENT_CONFLICT`; reductions are
+always permitted and retain the campaign's original intent.
+
+Session times live under `session_controls`. New or increasing exposure is rejected
+at/after `new_entry_cutoff`, while reductions and exits remain allowed. Optional
+automatic square-off submits ordinary local MARKET closing orders for INTRADAY
+positions through feed safety, risk, OMS, `LivePaperBroker`, portfolio, and SQLite.
+It never mutates a position or fabricates a fill. Stale/disconnected feeds leave the
+position open and produce a durable failure audit event. SWING positions are never
+included. `squareoff intraday` invokes the same path manually. At session end,
+configured EOD cancellation applies only to open INTRADAY orders.
+
+`quit` produces `STOPPED`, preserving all paper state for `--resume`. `complete`
+produces terminal `COMPLETED` only when there are no open positions or open orders.
+A SWING position therefore requires `quit`/`STOPPED`, followed by `--resume`;
+completion is rejected with a specific continuity blocker. Overnight SWING
+continuity uses the same resumable multi-day LIVE_PAPER session and fill ledger—there
+is no new capital or cost basis. Starting a separate session creates a separate configured-capital
+account; cross-session account continuity is intentionally not implied. Daily-loss
+limits are therefore session-ledger based in this version.
+
+Read-only CSV export works for any session status:
+
+```bash
+.venv/bin/python scripts/export_session.py --session SESSION_ID
+```
+
+The default `data/sessions/SESSION_ID/` output contains `session_summary.csv`,
+`orders.csv`, `fills.csv`, `trades.csv`, `positions.csv`, `risk_events.csv`, and
+`event_journal.csv`. These are derived artifacts and never update SQLite. Summary
+fields cover lifecycle/capital/P&L, order/fill/trade counts, wins/losses, intent-aware
+open-position counts, rejection count, and final feed counters when the session
+recorded them. Optional export after successful completion is independently
+configured; export failure cannot roll back trading records.
 
 Live candles use the same `Candle(interval="1minute", completed=True)` domain model
 and Asia/Kolkata start timestamp as historical candles. A candle finalizes when the
@@ -284,6 +324,8 @@ src/paper_trading/
   execution/               Broker protocol, historical/live paper brokers, OMS
   portfolio/               Weighted-average in-memory accounting
   risk/                    Deterministic pre-trade risk checks
+  session_controls.py     Intent, cutoff, EOD, and completion controls
+  reporting.py            Read-only session summary and CSV export
   storage/                 SQLite schema, repositories, lifecycle, and recovery
   strategies/              Broker-independent strategy lifecycle
 tests/                     Unit and integration tests with small fixtures
@@ -302,6 +344,6 @@ Live limitations include no exchange calendar, raw-tick archive, full-depth mode
 latency metrics beyond timestamps, or cross-process queue. The terminal and feed
 threads only enqueue work; one main loop owns trading and durable-state mutations.
 
-The recommended next phase is operational hardening of manual paper sessions:
-end-of-day controls, reconciliation/report export, and supervised failure drills.
-Strategies and real Zerodha execution should remain separate later phases.
+The recommended next phase is supervised operational failure drills and account-level
+reconciliation design. Strategies and real Zerodha execution remain separate later
+phases.

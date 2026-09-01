@@ -6,14 +6,17 @@ import shlex
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Callable, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
 
 from .engine import TradingEngine
 from .events import CandleEvent, TickEvent
 from .market_data.health import FeedHealthSnapshot, FeedState
 from .market_data.quotes import LiveQuote, LiveQuoteStore
-from .models import Instrument, Order, OrderRequest, OrderType, Side
+from .models import Instrument, Order, OrderRequest, OrderType, Side, TradeIntent
 from .risk import RiskDecision
+
+if TYPE_CHECKING:
+    from .session_controls import SessionController
 
 
 class ManualCommandError(ValueError):
@@ -33,6 +36,8 @@ class ManualAction(StrEnum):
     CANCEL = "CANCEL"
     HEALTH = "HEALTH"
     QUIT = "QUIT"
+    COMPLETE = "COMPLETE"
+    SQUAREOFF = "SQUAREOFF"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +48,7 @@ class ManualCommand:
     order_type: OrderType | None = None
     price: float | None = None
     order_id: str | None = None
+    intent: TradeIntent = TradeIntent.INTRADAY
 
 
 def parse_manual_command(text: str) -> ManualCommand:
@@ -58,8 +64,13 @@ def parse_manual_command(text: str) -> ManualCommand:
     except ValueError as exc:
         raise ManualCommandError(f"unknown command: {parts[0]}") from exc
     if action in {ManualAction.BUY, ManualAction.SELL}:
+        intent = TradeIntent.INTRADAY
+        if parts[-1].upper() in {item.value for item in TradeIntent}:
+            intent = TradeIntent(parts.pop().upper())
         if len(parts) not in {4, 5}:
-            raise ManualCommandError("usage: buy|sell SYMBOL QUANTITY market|limit|stop [PRICE]")
+            raise ManualCommandError(
+                "usage: buy|sell SYMBOL QUANTITY market|limit|stop [PRICE] [intraday|swing]"
+            )
         symbol = parts[1].upper()
         try:
             quantity = int(parts[2])
@@ -84,7 +95,7 @@ def parse_manual_command(text: str) -> ManualCommand:
                 raise ManualCommandError("price must be numeric") from exc
             if price <= 0:
                 raise ManualCommandError("price must be positive")
-        return ManualCommand(action, symbol, quantity, order_type, price)
+        return ManualCommand(action, symbol, quantity, order_type, price, intent=intent)
     if action is ManualAction.QUOTE:
         if len(parts) != 2:
             raise ManualCommandError("usage: quote SYMBOL")
@@ -93,6 +104,10 @@ def parse_manual_command(text: str) -> ManualCommand:
         if len(parts) != 2:
             raise ManualCommandError("usage: cancel ORDER_ID")
         return ManualCommand(action, order_id=parts[1])
+    if action is ManualAction.SQUAREOFF:
+        if len(parts) != 2 or parts[1].lower() != "intraday":
+            raise ManualCommandError("usage: squareoff intraday")
+        return ManualCommand(action)
     if len(parts) != 1:
         raise ManualCommandError(f"{parts[0]} takes no arguments")
     return ManualCommand(action)
@@ -140,11 +155,14 @@ class ManualLivePaperRuntime:
         quote_store: LiveQuoteStore,
         instruments: Sequence[Instrument],
         clock: Callable[[], datetime],
+        session_controller: SessionController | None = None,
     ) -> None:
         self.engine = engine
         self.quote_store = quote_store
         self.instruments = {instrument.tradingsymbol.upper(): instrument for instrument in instruments}
         self.clock = clock
+        self.session_controller = session_controller
+        self.completion_requested = False
 
     def handle_market_event(self, event: TickEvent | CandleEvent) -> None:
         if isinstance(event, TickEvent):
@@ -178,5 +196,19 @@ class ManualLivePaperRuntime:
             limit_price=command.price if command.order_type is OrderType.LIMIT else None,
             stop_price=command.price if command.order_type is OrderType.STOP_MARKET else None,
             metadata={"source": "MANUAL_LIVE_PAPER"},
+            intent=command.intent,
         )
         return self.engine.submit_order(request)
+
+    def square_off_intraday(self) -> tuple[tuple[RiskDecision, Order], ...]:
+        if self.session_controller is None:
+            raise RuntimeError("session controller is required")
+        return self.session_controller.square_off_intraday()
+
+    def request_completion(self) -> tuple[str, ...]:
+        if self.session_controller is None:
+            raise RuntimeError("session controller is required")
+        blockers = self.session_controller.completion_blockers()
+        if not blockers:
+            self.completion_requested = True
+        return blockers

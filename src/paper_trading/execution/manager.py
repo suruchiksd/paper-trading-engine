@@ -42,6 +42,7 @@ class OrderManager:
             stop_price=request.stop_price,
             oco_group_id=request.oco_group_id,
             metadata=request.metadata,
+            intent=request.intent,
             order_id=self.order_id_factory(),
         )
         self.orders[order.order_id] = order
@@ -68,6 +69,7 @@ class OrderManager:
             stop_price=request.stop_price,
             oco_group_id=request.oco_group_id,
             metadata=request.metadata,
+            intent=request.intent,
             order_id=self.order_id_factory(),
         )
         self.orders[order.order_id] = order

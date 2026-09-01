@@ -37,9 +37,6 @@ class RiskManager:
     ) -> RiskDecision:
         if request.quantity <= 0:
             return RiskDecision(False, "quantity must be positive", 0)
-        daily_loss_limit = portfolio.starting_capital * self.limits.maximum_daily_loss_pct / 100
-        if portfolio.total_pnl <= -daily_loss_limit:
-            return RiskDecision(False, "maximum daily loss reached", 0)
         price = self._reference_price(request, portfolio)
         if price is None:
             return RiskDecision(False, "a positive reference price is required", 0)
@@ -63,6 +60,15 @@ class RiskManager:
             for order in pending
             if order.instrument.key == key
         )
+        effective_quantity = current_quantity + pending_signed
+        opens_exposure = (
+            effective_quantity == 0
+            or (effective_quantity > 0) == (signed > 0)
+            or abs(signed) > abs(effective_quantity)
+        )
+        daily_loss_limit = portfolio.starting_capital * self.limits.maximum_daily_loss_pct / 100
+        if opens_exposure and portfolio.total_pnl <= -daily_loss_limit:
+            return RiskDecision(False, "maximum daily loss reached", 0)
         projected_quantity = current_quantity + pending_signed + signed
         exposure_limit = portfolio.equity * self.limits.maximum_position_exposure_pct / 100
         if abs(projected_quantity) * price > exposure_limit:
@@ -87,4 +93,3 @@ class RiskManager:
             position = portfolio.positions.get(request.instrument.key)
             price = position.last_price if position else None
         return price if price is not None and price > 0 else None
-

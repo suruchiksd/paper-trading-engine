@@ -40,6 +40,11 @@ class SignalDirection(StrEnum):
     EXIT = "EXIT"
 
 
+class TradeIntent(StrEnum):
+    INTRADAY = "INTRADAY"
+    SWING = "SWING"
+
+
 class SessionStatus(StrEnum):
     CREATED = "CREATED"
     RUNNING = "RUNNING"
@@ -86,6 +91,7 @@ class OrderRequest:
     stop_price: float | None = None
     oco_group_id: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    intent: TradeIntent = TradeIntent.INTRADAY
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:
@@ -204,6 +210,7 @@ class Order:
     updated_at: datetime | None = None
     oco_group_id: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    intent: TradeIntent = TradeIntent.INTRADAY
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:
@@ -229,6 +236,7 @@ class Fill:
     strategy_version: str | None = None
     fill_id: str = field(default_factory=_id)
     fees: float = 0.0
+    intent: TradeIntent = TradeIntent.INTRADAY
 
     def __post_init__(self) -> None:
         if self.quantity <= 0 or self.price <= 0:
@@ -245,6 +253,7 @@ class Position:
     realized_pnl: float = 0.0
     last_price: float | None = None
     position_id: str = field(default_factory=_id)
+    intent: TradeIntent = TradeIntent.INTRADAY
 
     def __post_init__(self) -> None:
         if self.quantity != 0 and self.average_price <= 0:
@@ -277,6 +286,7 @@ class Trade:
     realized_pnl: float | None = None
     gross_realized_pnl: float | None = None
     costs: float = 0.0
+    intent: TradeIntent = TradeIntent.INTRADAY
 
     def __post_init__(self) -> None:
         if self.quantity <= 0 or self.entry_price <= 0:

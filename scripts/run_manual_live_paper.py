@@ -40,6 +40,8 @@ from paper_trading.execution.costs import BasisPointsTransactionCosts  # noqa: E
 from paper_trading.portfolio import Portfolio  # noqa: E402
 from paper_trading.risk import RiskLimits, RiskManager  # noqa: E402
 from paper_trading.storage import SQLiteDatabase, SQLiteStore, SessionService  # noqa: E402
+from paper_trading.session_controls import SessionControlConfig, SessionController  # noqa: E402
+from paper_trading.reporting import SessionExporter  # noqa: E402
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -58,6 +60,7 @@ def parse_args() -> argparse.Namespace:
 def _print_help() -> None:
     print("Commands: quote SYMBOL | buy/sell SYMBOL QTY market")
     print("          buy/sell SYMBOL QTY limit PRICE | buy/sell SYMBOL QTY stop PRICE")
+    print("          squareoff intraday | complete")
     print("          orders | positions | trades | pnl | cancel ORDER_ID | health | status | quit")
 
 
@@ -67,6 +70,18 @@ def _show(command, runtime, feed, session) -> bool:
         _print_help()
     elif action is ManualAction.QUIT:
         return False
+    elif action is ManualAction.COMPLETE:
+        blockers = runtime.request_completion()
+        if blockers:
+            print(f"COMPLETION REJECTED: {', '.join(blockers)}")
+        else:
+            print("Session completion requested.")
+            return False
+    elif action is ManualAction.SQUAREOFF:
+        results = runtime.square_off_intraday()
+        print(f"PAPER intraday square-off orders: {len(results)}")
+        for decision, order in results:
+            print(f"{order.order_id} {order.status}: {decision.reason}")
     elif action is ManualAction.HEALTH:
         print(feed.health_snapshot())
     elif action is ManualAction.STATUS:
@@ -91,7 +106,10 @@ def _show(command, runtime, feed, session) -> bool:
         print(f"PAPER CANCELLED {order.order_id}")
     elif action in {ManualAction.BUY, ManualAction.SELL}:
         print("PAPER ORDER")
-        print(f"{action} {command.symbol}  Qty: {command.quantity}  Type: {command.order_type}")
+        print(
+            f"{action} {command.symbol}  Qty: {command.quantity}  "
+            f"Type: {command.order_type}  Intent: {command.intent}"
+        )
         decision, order = runtime.submit(command)
         print(f"{order.order_id} {order.status}: {decision.reason}")
     return True
@@ -157,8 +175,25 @@ def main() -> int:
         instruments, quotes, feed.health_snapshot, lambda: datetime.now(IST),
         paper.max_quote_age_seconds,
     )
-    engine = TradingEngine(risk_manager=risk, order_manager=order_manager, portfolio=portfolio, persistence=recorder, pre_trade_check=gate.check)
-    runtime = ManualLivePaperRuntime(engine, quotes, instruments, lambda: datetime.now(IST))
+    engine = TradingEngine(risk_manager=risk, order_manager=order_manager, portfolio=portfolio, persistence=recorder)
+    controls_config = config.session_controls
+    controller = SessionController(
+        engine,
+        SessionControlConfig(
+            controls_config.new_entry_cutoff,
+            controls_config.intraday_square_off_time,
+            controls_config.session_end_time,
+            controls_config.reject_new_entries_after_cutoff,
+            controls_config.auto_square_off_intraday,
+            controls_config.cancel_open_intraday_orders_at_eod,
+        ),
+        lambda: datetime.now(IST),
+        gate.check,
+    )
+    engine.pre_trade_check = controller.check
+    runtime = ManualLivePaperRuntime(
+        engine, quotes, instruments, lambda: datetime.now(IST), controller
+    )
 
     work: queue.Queue[tuple[str, object]] = queue.Queue()
     accepting = True
@@ -190,7 +225,11 @@ def main() -> int:
         market_thread.start()
         input_thread.start()
         while accepting:
-            kind, payload = work.get()
+            try:
+                kind, payload = work.get(timeout=0.5)
+            except queue.Empty:
+                controller.on_clock()
+                continue
             if kind == "market":
                 runtime.handle_market_event(payload)
             elif kind == "fatal":
@@ -200,6 +239,7 @@ def main() -> int:
                     accepting = _show(parse_manual_command(str(payload)), runtime, feed, session)
                 except (ManualCommandError, ValueError, KeyError) as exc:
                     print(f"ERROR: {exc}")
+            controller.on_clock()
     except KeyboardInterrupt:
         print("Stopping PAPER session...")
     except Exception:
@@ -214,14 +254,40 @@ def main() -> int:
             runtime.handle_market_event(event)
         now = datetime.now(IST)
         try:
+            health = feed.health_snapshot()
+            recorder.record_audit(
+                "LIVE_FEED_FINAL_HEALTH",
+                now,
+                {
+                    "reconnect_count": health.reconnect_count,
+                    "dropped_ticks": health.dropped_ticks,
+                    "duplicate_ticks": health.duplicate_ticks,
+                    "out_of_order_ticks": health.out_of_order_ticks,
+                },
+            )
             recorder.checkpoint_positions(portfolio, now)
             current = store.get_session(session.session_id)
             if current.status is SessionStatus.RUNNING:
-                (sessions.fail if failed else sessions.stop)(session.session_id, now)
+                if failed:
+                    sessions.fail(session.session_id, now)
+                elif runtime.completion_requested:
+                    sessions.complete(session.session_id, portfolio, now)
+                    if controls_config.auto_export_on_complete:
+                        try:
+                            SessionExporter(store).export(
+                                session.session_id, controls_config.reports_path
+                            )
+                        except Exception:
+                            logging.exception(
+                                "session completed, but automatic CSV export failed"
+                            )
+                else:
+                    sessions.stop(session.session_id, now)
         except Exception:
             logging.exception("failed to persist final session state")
             failed = True
-    print(f"Session {session.session_id} {'FAILED' if failed else 'STOPPED'}; open paper positions were preserved.")
+    final_status = "FAILED" if failed else ("COMPLETED" if runtime.completion_requested else "STOPPED")
+    print(f"Session {session.session_id} {final_status}; open paper positions were preserved.")
     return 1 if failed else 0
 
 
