@@ -11,7 +11,7 @@ from typing import Callable, Sequence
 from .engine import TradingEngine
 from .events import CandleEvent, TickEvent
 from .market_data.health import FeedHealthSnapshot, FeedState
-from .market_data.quotes import LiveQuoteStore
+from .market_data.quotes import LiveQuote, LiveQuoteStore
 from .models import Instrument, Order, OrderRequest, OrderType, Side
 from .risk import RiskDecision
 
@@ -152,6 +152,13 @@ class ManualLivePaperRuntime:
             self.engine.process_live_tick(event.tick)
         else:
             self.engine.process_candle(event.candle)
+
+    def quote(self, symbol: str) -> LiveQuote | None:
+        """Return a subscribed symbol's quote from the execution quote store."""
+        instrument = self.instruments.get(symbol.upper())
+        if instrument is None:
+            raise ManualCommandError("SYMBOL_NOT_SUBSCRIBED")
+        return self.quote_store.get(instrument.key)
 
     def submit(self, command: ManualCommand) -> tuple[RiskDecision, Order]:
         if command.action not in {ManualAction.BUY, ManualAction.SELL}:

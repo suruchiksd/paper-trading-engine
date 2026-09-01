@@ -1,17 +1,26 @@
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from paper_trading.execution import LiveExecutionConfig, LivePaperBroker, OrderManager
 from paper_trading.engine import TradingEngine
-from paper_trading.manual import LiveOrderGate, ManualAction, ManualCommandError, parse_manual_command
+from paper_trading.events import TickEvent
+from paper_trading.manual import (
+    LiveOrderGate,
+    ManualAction,
+    ManualCommandError,
+    ManualLivePaperRuntime,
+    parse_manual_command,
+)
 from paper_trading.market_data import LiveQuoteStore
 from paper_trading.market_data.health import FeedHealthSnapshot, FeedState
 from paper_trading.models import Instrument, OrderRequest, OrderStatus, OrderType, Side, Tick
 from paper_trading.portfolio import Portfolio
 from paper_trading.risk import RiskLimits, RiskManager
 from paper_trading.storage import SQLiteDatabase, SQLiteStore, SessionService
+from scripts.run_manual_live_paper import _show
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -173,6 +182,75 @@ def test_live_session_restart_restores_ledger_and_does_not_infer_offline_fills(t
     resumed_tick = tick(now + timedelta(minutes=10), ltp=89, bid=88.9, ask=89)
     fresh_quotes.update(resumed_tick)
     assert recovered.order_manager.process_tick(resumed_tick)
+
+
+def command_runtime(now):
+    instrument = tick(now[0]).instrument
+    quotes = LiveQuoteStore()
+    broker = LivePaperBroker(quotes, healthy, lambda: now[0])
+    ids = (f"PAPER-{number}" for number in range(1, 20))
+    manager = OrderManager(broker, lambda: next(ids))
+    portfolio = Portfolio(100_000)
+    gate = LiveOrderGate([instrument], quotes, healthy, lambda: now[0], 5)
+    engine = TradingEngine(
+        risk_manager=RiskManager(RiskLimits(5, 50, 100)),
+        order_manager=manager,
+        portfolio=portfolio,
+        pre_trade_check=gate.check,
+    )
+    runtime = ManualLivePaperRuntime(engine, quotes, [instrument], lambda: now[0])
+    feed = SimpleNamespace(health_snapshot=healthy)
+    session = SimpleNamespace(session_id="SESSION-1", mode="LIVE_PAPER", status="RUNNING")
+    assert runtime.quote_store is broker.quote_store is gate.quote_store
+    return runtime, feed, session
+
+
+def test_quote_command_uses_runtime_authoritative_quote_store(capsys):
+    now = [datetime(2026, 9, 1, 10, 0, tzinfo=IST)]
+    runtime, feed, session = command_runtime(now)
+    runtime.handle_market_event(TickEvent(tick(now[0], ltp=101, bid=100.9, ask=101.1)))
+    assert _show(parse_manual_command("quote RELIANCE"), runtime, feed, session)
+    output = capsys.readouterr().out
+    assert "last_price=101" in output
+    assert "NSE:RELIANCE" not in output  # domain object, not a second CLI quote cache
+
+
+def test_all_command_handlers_and_mocked_live_paper_lifecycle(capsys):
+    now = [datetime(2026, 9, 1, 10, 0, tzinfo=IST)]
+    runtime, feed, session = command_runtime(now)
+
+    # Empty display surfaces and live state inspection.
+    for text in ("orders", "positions", "trades", "pnl", "health", "status"):
+        assert _show(parse_manual_command(text), runtime, feed, session)
+    runtime.handle_market_event(TickEvent(tick(now[0], ltp=100, bid=99.9, ask=100.1)))
+    assert _show(parse_manual_command("quote RELIANCE"), runtime, feed, session)
+
+    # A cancellable populated order verifies the real engine cancellation path.
+    assert _show(parse_manual_command("buy RELIANCE 1 limit 90"), runtime, feed, session)
+    pending = runtime.engine.order_manager.orders["PAPER-1"]
+    assert pending.status is OrderStatus.OPEN
+    assert _show(parse_manual_command(f"cancel {pending.order_id}"), runtime, feed, session)
+    assert pending.status is OrderStatus.CANCELLED
+
+    # Buy and sell are evaluated only by subsequent fresh ticks.
+    assert _show(parse_manual_command("buy RELIANCE 10 market"), runtime, feed, session)
+    now[0] += timedelta(seconds=1)
+    runtime.handle_market_event(TickEvent(tick(now[0], ltp=101, bid=100.9, ask=101.1)))
+    assert runtime.engine.portfolio.open_positions[0].quantity == 10
+    for text in ("orders", "positions", "pnl"):
+        assert _show(parse_manual_command(text), runtime, feed, session)
+
+    assert _show(parse_manual_command("sell RELIANCE 10 market"), runtime, feed, session)
+    now[0] += timedelta(seconds=1)
+    runtime.handle_market_event(TickEvent(tick(now[0], ltp=102, bid=101.9, ask=102.1)))
+    assert runtime.engine.portfolio.open_positions == ()
+    assert len(runtime.engine.portfolio.closed_trades) == 1
+    assert _show(parse_manual_command("trades"), runtime, feed, session)
+    assert _show(parse_manual_command("quit"), runtime, feed, session) is False
+
+    output = capsys.readouterr().out
+    for expected in ("PAPER ORDER", "PAPER CANCELLED", "Cash=", "Session: SESSION-1"):
+        assert expected in output
 
 
 @pytest.mark.parametrize("text,action", [

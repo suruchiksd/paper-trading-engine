@@ -70,9 +70,9 @@ def _show(command, runtime, feed, session) -> bool:
     elif action is ManualAction.HEALTH:
         print(feed.health_snapshot())
     elif action is ManualAction.STATUS:
-        print(f"Session: {session.session_id}  Mode: LIVE_PAPER  Status: RUNNING")
+        print(f"Session: {session.session_id}  Mode: {session.mode}  Status: {session.status}")
     elif action is ManualAction.QUOTE:
-        quote = runtime.quotes.get(command.symbol or "")
+        quote = runtime.quote(command.symbol or "")
         print(quote if quote is not None else f"No live quote for {command.symbol}")
     elif action is ManualAction.ORDERS:
         for order in runtime.engine.order_manager.orders.values():
@@ -91,7 +91,7 @@ def _show(command, runtime, feed, session) -> bool:
         print(f"PAPER CANCELLED {order.order_id}")
     elif action in {ManualAction.BUY, ManualAction.SELL}:
         print("PAPER ORDER")
-        print(f"{command.side} {command.symbol}  Qty: {command.quantity}  Type: {command.order_type}")
+        print(f"{action} {command.symbol}  Qty: {command.quantity}  Type: {command.order_type}")
         decision, order = runtime.submit(command)
         print(f"{order.order_id} {order.status}: {decision.reason}")
     return True
