@@ -1,0 +1,78 @@
+strategy:
+  id: gap_fade_v1
+  version: 1.0.0
+  mode: paper_only
+  status: FORWARD_OBSERVATION_ONLY_EDGE_NOT_VALIDATED
+
+frozen_research:
+  repository: /home/suruchi-pandey/Projects/sector-intraday-strategy
+  phase7b_config: config/phase7b_gap_fade_v1.yaml
+  phase7b_config_sha256: 594f3ff8964f7b637b6f282d0f5475be4c9a6a4a1a17c46c25da6594a77a2ce4
+  selected_strategy: outputs/backtests/phase7b/selected_candidate/selected_strategy.json
+  selected_strategy_sha256: a54e28b50089567f78fd1b33c12048ee21eedfefb6282c88e5abd131adfc8bc8
+  selected_cell: BASE_0930_OPEN_EOD
+  validation_2023: FAIL
+
+universe:
+  manifest: config/gap_fade_v1_universe.csv
+  policy: phase7b_current_deployment_universe_research_eligible
+  expected_eligible_count: 115
+  unresolved_symbol_policy: reject_symbol_continue_session
+
+signal:
+  direction: SHORT
+  minimum_positive_gap_inclusive: 0.015
+  maximum_retention_exclusive: 0.50
+  session_open_bar: "09:15"
+  completed_source_bar: "09:29"
+  decision_time: "09:30"
+  required_opening_bars: 15
+  entry: next_valid_executable_tick_after_decision
+  context_filter: NONE
+  ranking:
+    formula: gap_pct * (1 - retention)
+    tie_breaker: symbol_ascending
+  maximum_one_trade_per_symbol_session: true
+
+stop:
+  family: OPEN_RECLAIM
+  buffer_bps: 2
+  formula: session_open * 1.0002
+  raw_stop_distance_pct_minimum_inclusive: 0.0020
+  raw_stop_distance_pct_maximum_inclusive: 0.0125
+
+exit:
+  profit_target: NONE
+  normal: stop_or_15_00_open
+  square_off_time: "15:00"
+  forced_flat_no_later_than: "15:00"
+  overnight: false
+
+paper_execution:
+  starting_capital: 400000
+  risk_rupees_per_trade: 500
+  maximum_position_notional: 150000
+  maximum_gross_exposure: 400000
+  maximum_simultaneous_positions: 2
+  maximum_positions_per_sector: 1
+  maximum_new_trades_per_day: 2
+  daily_hard_loss_rupees: 1500
+  leverage: false
+  averaging: false
+  pyramiding: false
+  slippage_bps_per_side: 5
+  quote_max_age_seconds: 5
+  decision_collection_grace_seconds: 10
+
+costs:
+  schedule: zerodha_nse_cash_intraday_current
+  components:
+    - brokerage
+    - stt
+    - nse_transaction_charge
+    - sebi_charge
+    - stamp_duty
+    - gst
+    - ipft
+    - slippage
+

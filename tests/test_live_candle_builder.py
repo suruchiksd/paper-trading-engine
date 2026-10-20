@@ -34,6 +34,45 @@ def test_builds_ohlc_and_completed_candle_at_rollover() -> None:
     assert completed.completed
 
 
+def test_preopen_tick_cannot_define_regular_open_and_official_open_wins() -> None:
+    builder = OneMinuteCandleBuilder()
+    preopen_at = datetime(2026, 10, 19, 9, 14, 59, tzinfo=IST)
+    regular_at = datetime(2026, 10, 19, 9, 15, 3, tzinfo=IST)
+    rollover_at = datetime(2026, 10, 19, 9, 16, 1, tzinfo=IST)
+    builder.process(Tick(RELIANCE, preopen_at, preopen_at, 99.0, 10, session_open=101.0))
+    preopen = builder.process(
+        Tick(RELIANCE, regular_at, regular_at, 101.2, 20, session_open=101.0)
+    ).completed_candle
+    assert preopen is not None and preopen.timestamp.minute == 14
+    regular = builder.process(
+        Tick(RELIANCE, rollover_at, rollover_at, 101.4, 30, session_open=101.0)
+    ).completed_candle
+    assert regular is not None
+    assert regular.timestamp == datetime(2026, 10, 19, 9, 15, tzinfo=IST)
+    assert regular.open == 101.0
+
+
+def test_first_regular_tick_is_open_when_authoritative_open_is_absent() -> None:
+    builder = OneMinuteCandleBuilder()
+    first = datetime(2026, 10, 19, 9, 15, 2, tzinfo=IST)
+    rollover = datetime(2026, 10, 19, 9, 16, 0, tzinfo=IST)
+    builder.process(Tick(RELIANCE, first, first, 101.2, 20))
+    completed = builder.process(Tick(RELIANCE, rollover, rollover, 101.4, 30)).completed_candle
+    assert completed is not None and completed.open == 101.2
+
+
+def test_regular_open_boundary_uses_asia_kolkata_for_utc_ticks() -> None:
+    builder = OneMinuteCandleBuilder()
+    utc = ZoneInfo("UTC")
+    first = datetime(2026, 10, 19, 3, 45, 2, tzinfo=utc)
+    rollover = datetime(2026, 10, 19, 3, 46, 0, tzinfo=utc)
+    builder.process(Tick(RELIANCE, first, first, 101.2, 20, session_open=101.0))
+    completed = builder.process(
+        Tick(RELIANCE, rollover, rollover, 101.4, 30, session_open=101.0)
+    ).completed_candle
+    assert completed is not None and completed.open == 101.0
+
+
 def test_multiple_instruments_are_independent() -> None:
     builder = OneMinuteCandleBuilder()
     builder.process(tick(RELIANCE, 15, 1, 100))

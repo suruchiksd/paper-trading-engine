@@ -11,6 +11,7 @@ from .paper import (
     PaperBroker,
     SlippageConfig,
 )
+from .zerodha_cash import ZerodhaCashCostBreakdown, ZerodhaNseCashIntradayCosts
 
 __all__ = [
     "AmbiguousExecutionError",
@@ -26,5 +27,7 @@ __all__ = [
     "PaperBroker",
     "SlippageConfig",
     "TransactionCostModel",
+    "ZerodhaCashCostBreakdown",
+    "ZerodhaNseCashIntradayCosts",
     "transition_order",
 ]

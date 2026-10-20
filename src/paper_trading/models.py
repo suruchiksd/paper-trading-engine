@@ -136,6 +136,7 @@ class Tick:
     volume: int | None = None
     best_bid: float | None = None
     best_ask: float | None = None
+    session_open: float | None = None
 
     def __post_init__(self) -> None:
         if self.last_price <= 0:
@@ -144,6 +145,8 @@ class Tick:
             raise ValueError("volume cannot be negative")
         if self.best_bid is not None and self.best_ask is not None and self.best_bid > self.best_ask:
             raise ValueError("best_bid cannot exceed best_ask")
+        if self.session_open is not None and self.session_open <= 0:
+            raise ValueError("session_open must be positive")
 
 
 @dataclass(frozen=True, slots=True)

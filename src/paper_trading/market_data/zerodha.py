@@ -81,6 +81,7 @@ class ZerodhaTickNormalizer:
         except (TypeError, ValueError) as exc:
             raise LiveTickError(f"invalid cumulative volume: {volume_value!r}") from exc
         bid, ask = self._best_prices(raw.get("depth"))
+        session_open = self._session_open(raw.get("ohlc"))
         try:
             return Tick(
                 instrument=instrument,
@@ -90,6 +91,7 @@ class ZerodhaTickNormalizer:
                 volume=volume,
                 best_bid=bid,
                 best_ask=ask,
+                session_open=session_open,
             )
         except ValueError as exc:
             raise LiveTickError(str(exc)) from exc
@@ -122,6 +124,18 @@ class ZerodhaTickNormalizer:
         except (KeyError, TypeError, ValueError, IndexError) as exc:
             raise LiveTickError(f"invalid market depth: {exc}") from exc
         return bid, ask
+
+    @staticmethod
+    def _session_open(ohlc: Any) -> float | None:
+        if not isinstance(ohlc, Mapping) or ohlc.get("open") is None:
+            return None
+        try:
+            value = float(ohlc["open"])
+        except (TypeError, ValueError) as exc:
+            raise LiveTickError(f"invalid session open: {ohlc.get('open')!r}") from exc
+        if value <= 0:
+            raise LiveTickError(f"invalid session open: {value!r}")
+        return value
 
 
 class ZerodhaLiveFeed:

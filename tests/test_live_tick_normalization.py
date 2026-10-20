@@ -19,6 +19,7 @@ def test_normalizes_equity_tick_timestamp_volume_and_depth() -> None:
             "last_price": 1300.5,
             "volume_traded": 12345,
             "exchange_timestamp": datetime(2026, 8, 31, 9, 15),
+            "ohlc": {"open": 1298.0, "high": 1302.0, "low": 1297.0, "close": 1295.0},
             "depth": {
                 "buy": [{"price": 1300.45, "quantity": 10}],
                 "sell": [{"price": 1300.55, "quantity": 12}],
@@ -32,6 +33,7 @@ def test_normalizes_equity_tick_timestamp_volume_and_depth() -> None:
     assert tick.volume == 12345
     assert tick.best_bid == 1300.45
     assert tick.best_ask == 1300.55
+    assert tick.session_open == 1298.0
 
 
 def test_missing_optional_timestamp_depth_and_volume_remain_explicit() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from zoneinfo import ZoneInfo
 
 from ..models import Candle, Instrument, Tick
 
@@ -102,6 +103,10 @@ class OneMinuteCandleBuilder:
         else:
             if volume_reset:
                 state.volume_start = tick.volume
+            if self._is_regular_session_open_minute(state.minute) and tick.session_open is not None:
+                state.open = tick.session_open
+                state.high = max(state.high, tick.session_open)
+                state.low = min(state.low, tick.session_open)
             state.high = max(state.high, tick.last_price)
             state.low = min(state.low, tick.last_price)
             state.close = tick.last_price
@@ -139,17 +144,28 @@ class OneMinuteCandleBuilder:
     @staticmethod
     def _new_state(tick: Tick, minute: datetime, baseline: int | None) -> _CandleState:
         assert tick.exchange_timestamp is not None
+        opening_price = (
+            tick.session_open
+            if OneMinuteCandleBuilder._is_regular_session_open_minute(minute)
+            and tick.session_open is not None
+            else tick.last_price
+        )
         return _CandleState(
             tick.instrument,
             minute,
-            tick.last_price,
-            tick.last_price,
-            tick.last_price,
+            opening_price,
+            max(opening_price, tick.last_price),
+            min(opening_price, tick.last_price),
             tick.last_price,
             baseline,
             tick.volume,
             tick.exchange_timestamp,
         )
+
+    @staticmethod
+    def _is_regular_session_open_minute(minute: datetime) -> bool:
+        local = minute.astimezone(ZoneInfo("Asia/Kolkata"))
+        return local.hour == 9 and local.minute == 15
 
     @staticmethod
     def _finalize(state: _CandleState) -> Candle:
